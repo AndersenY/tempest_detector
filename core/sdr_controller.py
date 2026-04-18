@@ -53,6 +53,12 @@ class SDRController:
             raise RuntimeError("SDR не настроен")
             
         cfg = self._cfg
+
+        # Очистка буфера USB (важно для RTL-SDR)
+        try:
+            self.sdr.read_bytes(1024 * 32) 
+        except:
+            pass
         
         # Ограничение буфера памяти (макс 1M сэмплов за раз, читаем циклом если надо)
         # Но для усреднения нам нужно total_samples
