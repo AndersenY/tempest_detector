@@ -206,6 +206,13 @@ class SpectrumPlotWidget(QWidget):
         """Запоминает диапазон частот из настроек для кнопки сброса зума."""
         self._freq_range_mhz = (x_min_mhz, x_max_mhz)
 
+    def pan_to(self, freq_mhz: float):
+        """Центрирует граф на freq_mhz, сохраняя текущий масштаб по X."""
+        vb = self.plot.getPlotItem().getViewBox()
+        x_range = vb.viewRange()[0]
+        half_span = (x_range[1] - x_range[0]) / 2
+        vb.setXRange(freq_mhz - half_span, freq_mhz + half_span, padding=0)
+
     def reset_zoom(self):
         """Сбрасывает X к диапазону из настроек, Y — авто по видимым данным."""
         if not self.curves or self._freq_range_mhz is None:

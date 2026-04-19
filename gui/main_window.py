@@ -390,7 +390,9 @@ class MainWindow(QMainWindow):
             return
         sig = min(signals, key=lambda s: abs(s.frequency_hz - freq_hz))
         if _marker_color(sig) is not None:
-            self.plot.set_highlight(sig.frequency_hz / 1e6)
+            freq_mhz = sig.frequency_hz / 1e6
+            self.plot.set_highlight(freq_mhz)
+            self.plot.pan_to(freq_mhz)
         else:
             self.plot.clear_highlight()
 
