@@ -12,7 +12,7 @@ from PyQt6.QtGui import QColor
 from core.workflow import MeasurementWorkflow
 from core.config import PanoramaConfig
 from core.sdr_controller import SDRController
-from gui.spectrum_widget import SpectrumPlotWidget
+from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 
 
 class Worker(QThread):
@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
 
         # График спектра
         self.plot = SpectrumPlotWidget()
+        self.plot.freq_clicked.connect(self._on_graph_click)
         main_layout.addWidget(self.plot, 3)
 
         # Нижняя секция: таблица + управление
@@ -117,9 +118,9 @@ class MainWindow(QMainWindow):
         table_layout.setContentsMargins(5, 5, 5, 5)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(
-            ["Частота (МГц)", "Δ дБ", "ON дБ", "OFF дБ", "Тип", "Статус"]
+            ["Частота (МГц)", "Δ дБ", "ON дБ", "OFF дБ", "Статус"]
         )
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -374,11 +375,63 @@ class MainWindow(QMainWindow):
             self.plot.clear_highlight()
             return
         row = self.table.currentRow()
+        freq_item = self.table.item(row, 0)
+        if freq_item is None:
+            self.plot.clear_highlight()
+            return
         signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
-        if 0 <= row < len(signals):
-            self.plot.set_highlight(signals[row].frequency_hz / 1e6)
+        if not signals:
+            self.plot.clear_highlight()
+            return
+        try:
+            freq_hz = float(freq_item.text()) * 1e6
+        except ValueError:
+            self.plot.clear_highlight()
+            return
+        sig = min(signals, key=lambda s: abs(s.frequency_hz - freq_hz))
+        if _marker_color(sig) is not None:
+            self.plot.set_highlight(sig.frequency_hz / 1e6)
         else:
             self.plot.clear_highlight()
+
+    def _on_graph_click(self, freq_mhz: float):
+        """Выделяет в таблице ближайший к freq_mhz сигнал с маркером на графике."""
+        if not self.wf or not hasattr(self.wf, "signals") or not self.wf.signals:
+            return
+
+        # Порог: половина видимого диапазона / 20 — слишком далёкий клик игнорируем
+        view_range = self.plot.plot.viewRange()[0]
+        visible_span = abs(view_range[1] - view_range[0]) if view_range[1] else 20.0
+        threshold_mhz = visible_span / 20.0
+
+        visible = [(i, s) for i, s in enumerate(self.wf.signals)
+                   if _marker_color(s) is not None]
+        if not visible:
+            return
+
+        nearest_i, nearest_sig = min(visible,
+                                     key=lambda x: abs(x[1].frequency_hz / 1e6 - freq_mhz))
+        if abs(nearest_sig.frequency_hz / 1e6 - freq_mhz) > threshold_mhz:
+            self.plot.clear_highlight()
+            self.table.clearSelection()
+            return
+
+        self.plot.set_highlight(nearest_sig.frequency_hz / 1e6)
+
+        # Выделяем строку в таблице по частоте
+        target_hz = nearest_sig.frequency_hz
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                try:
+                    if abs(float(item.text()) * 1e6 - target_hz) < 100:
+                        self.table.blockSignals(True)
+                        self.table.selectRow(row)
+                        self.table.blockSignals(False)
+                        self.table.scrollTo(self.table.model().index(row, 0))
+                        break
+                except ValueError:
+                    pass
 
     def _refresh_markers(self):
         """Перерисовывает маркеры на графике по текущему состоянию сигналов.
@@ -466,16 +519,21 @@ class MainWindow(QMainWindow):
 
     def _plot_data(self, on, off, diff):
         f_mhz = on.frequencies_hz / 1e6
+        x_min, x_max = float(f_mhz.min()), float(f_mhz.max())
+
         self.plot.clear()
+        self.plot.set_freq_range(x_min, x_max)
         self.plot.add("ON (Test)", f_mhz, on.amplitudes_db, "y")
         self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, "b")
         self.plot.add("Difference", f_mhz, diff, "r", fill=(255, 0, 0, 50))
-        self.plot.set_threshold(self.cfg.threshold_db)
+        self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
 
         if self.wf and hasattr(self.wf, "signals"):
             self._update_table_from_signals(self.wf.signals)
             self.plot.plot_signals(self.wf.signals)
-            self.plot.reset_zoom()
+
+        # Reset в конце, когда все элементы уже добавлены
+        self.plot.reset_zoom()
 
     def _update_table_only(self):
         if self.wf and hasattr(self.wf, "signals"):
@@ -518,10 +576,10 @@ class MainWindow(QMainWindow):
 
         for i, s in enumerate(signals):
             item_freq = QTableWidgetItem(f"{s.frequency_hz / 1e6:.4f}")
+            item_freq.setData(Qt.ItemDataRole.UserRole, i)  # индекс для поиска по клику
             item_diff = QTableWidgetItem(f"{s.amplitude_diff_db:.1f}")
             item_on   = QTableWidgetItem(f"{s.amplitude_on_db:.1f}")
             item_off  = QTableWidgetItem(f"{s.amplitude_off_db:.1f}")
-            item_type = QTableWidgetItem("Тройка" if s.is_triplet_representative else "Точка")
 
             # Определяем статус и цвет по status_color из workflow
             color_map = {
@@ -565,8 +623,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(i, 1, item_diff)
             self.table.setItem(i, 2, item_on)
             self.table.setItem(i, 3, item_off)
-            self.table.setItem(i, 4, item_type)
-            self.table.setItem(i, 5, item_status)
+            self.table.setItem(i, 4, item_status)
 
         self.table.setUpdatesEnabled(True)
         self.table.setSortingEnabled(True)

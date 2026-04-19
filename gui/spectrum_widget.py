@@ -1,11 +1,13 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 import pyqtgraph as pg
 import numpy as np
 from typing import List
 
 
 class SpectrumPlotWidget(QWidget):
+    freq_clicked = pyqtSignal(float)   # МГц, при клике левой кнопкой на графике
+
     def __init__(self):
         super().__init__()
 
@@ -43,7 +45,7 @@ class SpectrumPlotWidget(QWidget):
         panel_layout.setContentsMargins(5, 5, 5, 5)
         panel_layout.setSpacing(5)
 
-        self.btn_auto_scale = QPushButton("⟲ Авто")
+        self.btn_auto_scale = QPushButton("⟲ Сброс")
         self.btn_auto_scale.setStyleSheet("""
             QPushButton { background-color: #555; color: white; border: none;
                           padding: 4px 8px; border-radius: 3px; font-size: 11px; }
@@ -75,6 +77,9 @@ class SpectrumPlotWidget(QWidget):
         self.signal_markers = []          # список InfiniteLine
         self.markers_visible = True       # начальное состояние — видны
         self._highlight_line = None       # маркер выбранной строки таблицы
+        self._freq_range_mhz = None       # (x_min, x_max) из настроек
+
+        self.plot.scene().sigMouseClicked.connect(self._on_scene_click)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -86,6 +91,15 @@ class SpectrumPlotWidget(QWidget):
         for marker in self.signal_markers:
             marker.setVisible(checked)
         self.btn_markers.setText("🙈 Скрыть" if checked else "👁 ПЭМИН")
+
+    def _on_scene_click(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        vb = self.plot.getPlotItem().getViewBox()
+        if not vb.sceneBoundingRect().contains(event.scenePos()):
+            return
+        point = vb.mapSceneToView(event.scenePos())
+        self.freq_clicked.emit(point.x())
 
     # ------------------------------------------------------------------
     # Публичное API
@@ -125,13 +139,14 @@ class SpectrumPlotWidget(QWidget):
             self.signal_markers.append(line)
 
     def set_highlight(self, freq_mhz: float):
-        """Подсвечивает выбранную частоту белой вертикальной линией."""
+        """Подсвечивает выбранную частоту белой вертикальной линией поверх маркеров."""
         if self._highlight_line is None:
             self._highlight_line = pg.InfiniteLine(
                 angle=90,
                 movable=False,
                 pen=pg.mkPen((255, 255, 255), width=2.5),
             )
+            self._highlight_line.setZValue(100)   # поверх всех маркеров
             self.plot.addItem(self._highlight_line)
         self._highlight_line.setPos(freq_mhz)
         self._highlight_line.setVisible(True)
@@ -187,27 +202,23 @@ class SpectrumPlotWidget(QWidget):
         else:
             self.threshold_line.setData(x, y)
 
+    def set_freq_range(self, x_min_mhz: float, x_max_mhz: float):
+        """Запоминает диапазон частот из настроек для кнопки сброса зума."""
+        self._freq_range_mhz = (x_min_mhz, x_max_mhz)
+
     def reset_zoom(self):
-        """Сбрасывает масштаб: весь диапазон по X, авто по Y."""
-        if not self.curves:
+        """Сбрасывает X к диапазону из настроек, Y — авто по видимым данным."""
+        if not self.curves or self._freq_range_mhz is None:
             return
 
-        # Собираем общий X-диапазон по всем кривым
-        x_min, x_max = np.inf, -np.inf
-        for curve in self.curves.values():
-            x_data, _ = curve.getData()
-            if x_data is not None and len(x_data) > 0:
-                x_min = min(x_min, float(np.min(x_data)))
-                x_max = max(x_max, float(np.max(x_data)))
-
-        if np.isinf(x_min):
-            return
-
+        x_min, x_max = self._freq_range_mhz
         vb = self.plot.getPlotItem().getViewBox()
-        vb.setXRange(x_min, x_max, padding=0.01)
-        vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        vb.setXRange(x_min, x_max, padding=0)
+        # Y-авто только по кривым спектра (без бесконечных InfiniteLine)
+        self.plot.getPlotItem().autoRange(items=list(self.curves.values()))
+        # После autoRange восстанавливаем X (autoRange мог его сдвинуть)
+        vb.setXRange(x_min, x_max, padding=0)
 
-        # Растягиваем линию порога на весь диапазон
         if self.threshold_line is not None and self.threshold_line.yData is not None:
             self.set_threshold(float(self.threshold_line.yData[0]), [x_min, x_max])
 
