@@ -188,18 +188,28 @@ class SpectrumPlotWidget(QWidget):
             self.threshold_line.setData(x, y)
 
     def reset_zoom(self):
-        vb = self.plot.getPlotItem().getViewBox()
-        if self.curves:
-            first_curve = list(self.curves.values())[0]
-            x_data, _ = first_curve.getData()
+        """Сбрасывает масштаб: весь диапазон по X, авто по Y."""
+        if not self.curves:
+            return
+
+        # Собираем общий X-диапазон по всем кривым
+        x_min, x_max = np.inf, -np.inf
+        for curve in self.curves.values():
+            x_data, _ = curve.getData()
             if x_data is not None and len(x_data) > 0:
-                vb.setXRange(np.min(x_data), np.max(x_data), padding=0.02)
+                x_min = min(x_min, float(np.min(x_data)))
+                x_max = max(x_max, float(np.max(x_data)))
+
+        if np.isinf(x_min):
+            return
+
+        vb = self.plot.getPlotItem().getViewBox()
+        vb.setXRange(x_min, x_max, padding=0.01)
         vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-        if self.threshold_line:
-            view_range = self.plot.viewRange()[0]
-            if view_range[0] is not None and view_range[1] is not None:
-                self.set_threshold(self.threshold_line.yData[0],
-                                   [view_range[0], view_range[1]])
+
+        # Растягиваем линию порога на весь диапазон
+        if self.threshold_line is not None and self.threshold_line.yData is not None:
+            self.set_threshold(float(self.threshold_line.yData[0]), [x_min, x_max])
 
 
 # ------------------------------------------------------------------

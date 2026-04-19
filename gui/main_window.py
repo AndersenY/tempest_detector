@@ -247,16 +247,11 @@ class MainWindow(QMainWindow):
         self.chk_maxhold.setChecked(self.cfg.use_max_hold)
         layout.addWidget(self.chk_maxhold)
 
-        # Алгоритм троек
-        self.chk_triplets = QCheckBox("Алг. троек (п. 6.2.2)")
-        self.chk_triplets.setChecked(self.cfg.combine_triplets)
-        layout.addWidget(self.chk_triplets)
-
         layout.addStretch(1)
 
         self._settings_widgets = [
             self.spin_start_freq, self.spin_stop_freq, self.spin_threshold,
-            self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_triplets,
+            self.spin_gain, self.spin_avg, self.chk_maxhold,
         ]
         return box
 
@@ -273,8 +268,8 @@ class MainWindow(QMainWindow):
         self.cfg.threshold_db    = self.spin_threshold.value()
         self.cfg.sdr_gain_db     = self.spin_gain.value()
         self.cfg.averaging_count = self.spin_avg.value()
-        self.cfg.use_max_hold    = self.chk_maxhold.isChecked()
-        self.cfg.combine_triplets = self.chk_triplets.isChecked()
+        self.cfg.use_max_hold     = self.chk_maxhold.isChecked()
+        self.cfg.combine_triplets = True
         return True
 
     def _set_settings_enabled(self, enabled: bool):
