@@ -36,26 +36,28 @@ class SpectrumPlotWidget(QWidget):
             except AttributeError:
                 pass
 
-        # Панель кнопок
+        _btn_style = """
+            QPushButton { background-color: #555; color: white; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:hover { background-color: #777; }
+        """
+
+        # Верхняя правая панель: сброс + маркеры
         self.control_panel = QWidget(self.plot)
-        self.control_panel.setStyleSheet("""
-            QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }
-        """)
+        self.control_panel.setStyleSheet(
+            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+        )
         panel_layout = QHBoxLayout(self.control_panel)
         panel_layout.setContentsMargins(5, 5, 5, 5)
         panel_layout.setSpacing(5)
 
         self.btn_auto_scale = QPushButton("⟲ Сброс")
-        self.btn_auto_scale.setStyleSheet("""
-            QPushButton { background-color: #555; color: white; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:hover { background-color: #777; }
-        """)
+        self.btn_auto_scale.setStyleSheet(_btn_style)
         self.btn_auto_scale.clicked.connect(self.reset_zoom)
 
         self.btn_markers = QPushButton("👁 ПЭМИН")
         self.btn_markers.setCheckable(True)
-        self.btn_markers.setChecked(True)  # маркеры видны по умолчанию
+        self.btn_markers.setChecked(True)
         self.btn_markers.setStyleSheet("""
             QPushButton { background-color: #555; color: #aaa; border: none;
                           padding: 4px 8px; border-radius: 3px; font-size: 11px; }
@@ -66,7 +68,28 @@ class SpectrumPlotWidget(QWidget):
 
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
-        self.control_panel.move(10, 10)
+
+        # Нижняя правая панель: зум + и -
+        self.zoom_panel = QWidget(self.plot)
+        self.zoom_panel.setStyleSheet(
+            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+        )
+        zoom_layout = QHBoxLayout(self.zoom_panel)
+        zoom_layout.setContentsMargins(5, 5, 5, 5)
+        zoom_layout.setSpacing(8)
+
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_in.setFixedSize(28, 28)
+        self.btn_zoom_in.setStyleSheet(_btn_style)
+        self.btn_zoom_in.clicked.connect(self._zoom_in)
+
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_out.setFixedSize(28, 28)
+        self.btn_zoom_out.setStyleSheet(_btn_style)
+        self.btn_zoom_out.clicked.connect(self._zoom_out)
+
+        zoom_layout.addWidget(self.btn_zoom_in)
+        zoom_layout.addWidget(self.btn_zoom_out)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -74,17 +97,36 @@ class SpectrumPlotWidget(QWidget):
 
         self.curves = {}
         self.threshold_line = None
-        self.signal_markers = []          # список InfiniteLine
-        self.markers_visible = True       # начальное состояние — видны
-        self._highlight_line = None       # маркер выбранной строки таблицы
-        self._freq_range_mhz = None       # (x_min, x_max) из настроек
+        self.signal_markers = []
+        self.markers_visible = True
+        self._highlight_line = None
+        self._freq_range_mhz = None
 
         self.plot.scene().sigMouseClicked.connect(self._on_scene_click)
+
+    _ZOOM_FACTOR = 0.7   # каждый клик сжимает/растягивает диапазон на 30 %
+
+    def _zoom_in(self):
+        vb = self.plot.getPlotItem().getViewBox()
+        x0, x1 = vb.viewRange()[0]
+        cx = (x0 + x1) / 2
+        half = (x1 - x0) / 2 * self._ZOOM_FACTOR
+        vb.setXRange(cx - half, cx + half, padding=0)
+
+    def _zoom_out(self):
+        vb = self.plot.getPlotItem().getViewBox()
+        x0, x1 = vb.viewRange()[0]
+        cx = (x0 + x1) / 2
+        half = (x1 - x0) / 2 / self._ZOOM_FACTOR
+        vb.setXRange(cx - half, cx + half, padding=0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         panel_w = self.control_panel.width()
         self.control_panel.move(self.width() - panel_w - 10, 10)
+        zoom_w = self.zoom_panel.width()
+        zoom_h = self.zoom_panel.height()
+        self.zoom_panel.move(self.width() - zoom_w - 40, self.height() - zoom_h - 60)
 
     def _on_marker_toggle(self, checked: bool):
         self.markers_visible = checked
