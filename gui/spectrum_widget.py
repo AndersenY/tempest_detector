@@ -74,6 +74,7 @@ class SpectrumPlotWidget(QWidget):
         self.threshold_line = None
         self.signal_markers = []          # список InfiniteLine
         self.markers_visible = True       # начальное состояние — видны
+        self._highlight_line = None       # маркер выбранной строки таблицы
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -123,10 +124,28 @@ class SpectrumPlotWidget(QWidget):
             self.plot.addItem(line)
             self.signal_markers.append(line)
 
+    def set_highlight(self, freq_mhz: float):
+        """Подсвечивает выбранную частоту белой вертикальной линией."""
+        if self._highlight_line is None:
+            self._highlight_line = pg.InfiniteLine(
+                angle=90,
+                movable=False,
+                pen=pg.mkPen((255, 255, 255), width=2.5),
+            )
+            self.plot.addItem(self._highlight_line)
+        self._highlight_line.setPos(freq_mhz)
+        self._highlight_line.setVisible(True)
+
+    def clear_highlight(self):
+        """Убирает подсветку выбранной частоты."""
+        if self._highlight_line is not None:
+            self._highlight_line.setVisible(False)
+
     def clear(self):
         self.plot.clear()
         self.curves.clear()
         self.clear_markers()
+        self._highlight_line = None
         self.threshold_line = None
         self.legend = self.plot.addLegend(offset=(10, 10))
         if self.legend:

@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
+        self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self.table.setStyleSheet("""
             QTableWidget {
                 background-color: #252525; alternate-background-color: #2d2d2d;
@@ -372,6 +373,17 @@ class MainWindow(QMainWindow):
         self.thread.finished_signal.connect(self._on_thread_finished, Q)
 
         self.thread.start()
+
+    def _on_table_selection_changed(self):
+        if not self.table.selectedItems():
+            self.plot.clear_highlight()
+            return
+        row = self.table.currentRow()
+        signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
+        if 0 <= row < len(signals):
+            self.plot.set_highlight(signals[row].frequency_hz / 1e6)
+        else:
+            self.plot.clear_highlight()
 
     def _refresh_markers(self):
         """Перерисовывает маркеры на графике по текущему состоянию сигналов.
