@@ -21,3 +21,5 @@ class PanoramaConfig:
     combine_triplets: bool = True
     # Порог падения сигнала для В1: 50 % от исходного избытка над шумом
     verification_ratio: float = 0.5
+    # Максимальный допустимый дрейф фона для В2 (дБ)
+    v2_drift_limit_db: float = 6.0

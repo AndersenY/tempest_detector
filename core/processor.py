@@ -109,5 +109,4 @@ class PanoramaProcessor:
         формулируя критерий как «наличие сигнала». 6 дБ — стандартный инженерный
         выбор, совпадающий с порогом обнаружения.
         """
-        drift_limit_db = 6.0
-        return (new_off_db - sig.amplitude_off_db) < drift_limit_db
+        return (new_off_db - sig.amplitude_off_db) < self.cfg.v2_drift_limit_db

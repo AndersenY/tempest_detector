@@ -5,7 +5,8 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
                              QProgressBar, QMessageBox, QGroupBox, QHeaderView,
-                             QApplication, QFileDialog)
+                             QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
+                             QCheckBox, QFormLayout)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QCoreApplication
 from PyQt6.QtGui import QColor
 from core.workflow import MeasurementWorkflow
@@ -98,6 +99,9 @@ class MainWindow(QMainWindow):
         top_control_layout.addWidget(self.btn_stop)
         main_layout.addLayout(top_control_layout)
 
+        # Панель параметров измерения
+        main_layout.addWidget(self._create_settings_panel())
+
         # График спектра
         self.plot = SpectrumPlotWidget()
         main_layout.addWidget(self.plot, 3)
@@ -176,6 +180,106 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(bottom_section, 2)
 
     # ------------------------------------------------------------------
+    # Панель параметров
+    # ------------------------------------------------------------------
+
+    def _create_settings_panel(self) -> QGroupBox:
+        box = QGroupBox("Параметры измерения")
+        box.setStyleSheet("""
+            QGroupBox { font-weight: bold; border: 1px solid #444; border-radius: 5px;
+                        margin-top: 10px; padding-top: 8px; color: #e0e0e0; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+            QDoubleSpinBox, QSpinBox {
+                background-color: #333; color: #e0e0e0; border: 1px solid #555;
+                border-radius: 3px; padding: 2px 4px; min-width: 70px;
+            }
+            QLabel { color: #ccc; font-size: 12px; }
+            QCheckBox { color: #ccc; font-size: 12px; }
+        """)
+
+        layout = QHBoxLayout(box)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(16)
+
+        def spin(min_v, max_v, val, step=1.0, decimals=1):
+            s = QDoubleSpinBox()
+            s.setRange(min_v, max_v)
+            s.setValue(val)
+            s.setSingleStep(step)
+            s.setDecimals(decimals)
+            return s
+
+        # Частота начала
+        layout.addWidget(QLabel("Нач. частота (МГц):"))
+        self.spin_start_freq = spin(24, 1750, self.cfg.start_freq_hz / 1e6, 1.0, 2)
+        layout.addWidget(self.spin_start_freq)
+
+        # Частота конца
+        layout.addWidget(QLabel("Кон. частота (МГц):"))
+        self.spin_stop_freq = spin(25, 1750, self.cfg.stop_freq_hz / 1e6, 1.0, 2)
+        layout.addWidget(self.spin_stop_freq)
+
+        # Порог обнаружения
+        layout.addWidget(QLabel("Порог (дБ):"))
+        self.spin_threshold = spin(1.0, 40.0, self.cfg.threshold_db, 0.5, 1)
+        layout.addWidget(self.spin_threshold)
+
+        # Усиление SDR
+        layout.addWidget(QLabel("Усиление SDR (дБ):"))
+        self.spin_gain = spin(0.0, 50.0, self.cfg.sdr_gain_db, 0.5, 1)
+        layout.addWidget(self.spin_gain)
+
+        # Количество усреднений
+        layout.addWidget(QLabel("Усредн.:"))
+        self.spin_avg = QSpinBox()
+        self.spin_avg.setRange(1, 100)
+        self.spin_avg.setValue(self.cfg.averaging_count)
+        self.spin_avg.setStyleSheet("""
+            QSpinBox { background-color: #333; color: #e0e0e0; border: 1px solid #555;
+                       border-radius: 3px; padding: 2px 4px; min-width: 55px; }
+        """)
+        layout.addWidget(self.spin_avg)
+
+        # MaxHold
+        self.chk_maxhold = QCheckBox("MaxHold")
+        self.chk_maxhold.setChecked(self.cfg.use_max_hold)
+        layout.addWidget(self.chk_maxhold)
+
+        # Алгоритм троек
+        self.chk_triplets = QCheckBox("Алг. троек (п. 6.2.2)")
+        self.chk_triplets.setChecked(self.cfg.combine_triplets)
+        layout.addWidget(self.chk_triplets)
+
+        layout.addStretch(1)
+
+        self._settings_widgets = [
+            self.spin_start_freq, self.spin_stop_freq, self.spin_threshold,
+            self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_triplets,
+        ]
+        return box
+
+    def _apply_settings_to_cfg(self):
+        start = self.spin_start_freq.value() * 1e6
+        stop  = self.spin_stop_freq.value() * 1e6
+        if stop <= start:
+            QMessageBox.warning(self, "Ошибка параметров",
+                                "Конечная частота должна быть больше начальной.")
+            return False
+
+        self.cfg.start_freq_hz   = start
+        self.cfg.stop_freq_hz    = stop
+        self.cfg.threshold_db    = self.spin_threshold.value()
+        self.cfg.sdr_gain_db     = self.spin_gain.value()
+        self.cfg.averaging_count = self.spin_avg.value()
+        self.cfg.use_max_hold    = self.chk_maxhold.isChecked()
+        self.cfg.combine_triplets = self.chk_triplets.isChecked()
+        return True
+
+    def _set_settings_enabled(self, enabled: bool):
+        for w in self._settings_widgets:
+            w.setEnabled(enabled)
+
+    # ------------------------------------------------------------------
     # Сохранение отчёта
     # ------------------------------------------------------------------
 
@@ -232,6 +336,8 @@ class MainWindow(QMainWindow):
                 self.btn_stop.setEnabled(True)
 
     def _connect_and_start(self):
+        if not self._apply_settings_to_cfg():
+            return
         try:
             self.ctrl.connect()
             self.ctrl.configure(self.cfg)
@@ -241,6 +347,7 @@ class MainWindow(QMainWindow):
 
     def _start_workflow(self):
         self.current_step = "running"
+        self._set_settings_enabled(False)
         self.lbl_instruction.setText("⏳ <b>Запуск процесса...</b>")
         self.btn_action.setEnabled(False)
         self.btn_stop.setEnabled(True)
@@ -307,6 +414,7 @@ class MainWindow(QMainWindow):
     def _on_thread_finished(self):
         self.btn_stop.setEnabled(False)
         self.current_step = "idle"
+        self._set_settings_enabled(True)
         self.btn_action.setText("НОВЫЙ ПОИСК")
         self.btn_action.setStyleSheet("""
             QPushButton { background-color: #2196F3; color: white; font-weight: bold;
