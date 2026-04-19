@@ -1,6 +1,8 @@
 import sys
 import csv
 import os
+import types
+import numpy as np
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
@@ -8,10 +10,11 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
                              QCheckBox, QFormLayout)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.workflow import MeasurementWorkflow
 from core.config import PanoramaConfig
 from core.sdr_controller import SDRController
+from core.models import Spectrum, PEMINSignal
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 
 
@@ -45,7 +48,7 @@ class Worker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ПЭМИН Навигатор (RTL-SDR)")
+        self.setWindowTitle("ПЭМИН Детектор (RTL-SDR)")
         self.resize(1200, 800)
 
         self.setStyleSheet("""
@@ -63,8 +66,106 @@ class MainWindow(QMainWindow):
         self.thread = None
         self.current_step = "idle"
         self._resetting = False
+        self._last_on = None
+        self._last_off = None
+        self._last_diff = None
+
+        self.scan_mode = "full"   # "full" | "quick"
 
         self._init_ui()
+        self._setup_menu_bar()
+
+    def _setup_menu_bar(self):
+        mb = self.menuBar()
+        mb.setStyleSheet("""
+            QMenuBar { background-color: #2b2b2b; color: #e0e0e0; }
+            QMenuBar::item:selected { background-color: #444; }
+            QMenu { background-color: #2b2b2b; color: #e0e0e0; border: 1px solid #555; }
+            QMenu::item:selected { background-color: #3a3a3a; }
+            QMenu::separator { height: 1px; background: #555; margin: 3px 0; }
+        """)
+
+        # ── Режим ─────────────────────────────────────────────────────
+        menu_mode = mb.addMenu("Режим")
+
+        mode_group = QActionGroup(self)
+        mode_group.setExclusive(True)
+
+        self.act_mode_diff = QAction("Метод разности панорам  (ON − OFF)", self)
+        self.act_mode_diff.setCheckable(True)
+        self.act_mode_diff.setChecked(True)
+        self.act_mode_diff.triggered.connect(lambda: self._set_scan_mode("full"))
+        mode_group.addAction(self.act_mode_diff)
+        menu_mode.addAction(self.act_mode_diff)
+
+        self.act_mode_quick = QAction("Быстрое обнаружение  (без верификации)", self)
+        self.act_mode_quick.setCheckable(True)
+        self.act_mode_quick.triggered.connect(lambda: self._set_scan_mode("quick"))
+        mode_group.addAction(self.act_mode_quick)
+        menu_mode.addAction(self.act_mode_quick)
+
+        menu_mode.addSeparator()
+
+        self.act_mode_harmonic = QAction("Метод поиска по гармоникам  (не реализован)", self)
+        self.act_mode_harmonic.setCheckable(True)
+        self.act_mode_harmonic.setEnabled(False)
+        mode_group.addAction(self.act_mode_harmonic)
+        menu_mode.addAction(self.act_mode_harmonic)
+
+        self.act_mode_corr = QAction("Параметрически-корреляционный метод  (не реализован)", self)
+        self.act_mode_corr.setCheckable(True)
+        self.act_mode_corr.setEnabled(False)
+        mode_group.addAction(self.act_mode_corr)
+        menu_mode.addAction(self.act_mode_corr)
+
+        self.act_mode_audio = QAction("Аудио-визуальный метод  (не реализован)", self)
+        self.act_mode_audio.setCheckable(True)
+        self.act_mode_audio.setEnabled(False)
+        mode_group.addAction(self.act_mode_audio)
+        menu_mode.addAction(self.act_mode_audio)
+
+        menu_mode.addSeparator()
+
+        self.act_mode_demo = QAction("Демо-режим  (загрузить архив)", self)
+        self.act_mode_demo.setCheckable(True)
+        self.act_mode_demo.triggered.connect(lambda: self._set_scan_mode("demo"))
+        mode_group.addAction(self.act_mode_demo)
+        menu_mode.addAction(self.act_mode_demo)
+
+        # ── Действие ──────────────────────────────────────────────────
+        menu_action = mb.addMenu("Действие")
+
+        self.act_load = QAction("Загрузить измерение", self)
+        self.act_load.setShortcut("Ctrl+O")
+        self.act_load.triggered.connect(self._load_measurement)
+        menu_action.addAction(self.act_load)
+
+        self.act_compare = QAction("⚖  Сравнить две сессии", self)
+        self.act_compare.triggered.connect(self._compare_sessions)
+        menu_action.addAction(self.act_compare)
+
+        menu_action.addSeparator()
+
+        self.act_save = QAction("Экспорт сигналов (CSV)", self)
+        self.act_save.setShortcut("Ctrl+S")
+        self.act_save.setEnabled(False)
+        self.act_save.triggered.connect(self._save_report)
+        menu_action.addAction(self.act_save)
+
+        self.act_export_spectrum = QAction("Экспорт спектра (NPZ)", self)
+        self.act_export_spectrum.setShortcut("Ctrl+E")
+        self.act_export_spectrum.setEnabled(False)
+        self.act_export_spectrum.triggered.connect(self._export_spectrum)
+        menu_action.addAction(self.act_export_spectrum)
+
+    def _set_scan_mode(self, mode: str):
+        self.scan_mode = mode
+        if mode == "full":
+            self.btn_action.setText("ПОДКЛЮЧИТЬ И НАЧАТЬ")
+        elif mode == "quick":
+            self.btn_action.setText("БЫСТРОЕ СКАНИРОВАНИЕ")
+        elif mode == "demo":
+            self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
 
     def _init_ui(self):
         w = QWidget()
@@ -155,17 +256,6 @@ class MainWindow(QMainWindow):
         self.lbl_instruction.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.lbl_instruction.setMinimumHeight(100)
         control_layout.addWidget(self.lbl_instruction)
-
-        self.btn_save = QPushButton("💾 Сохранить отчет (CSV)")
-        self.btn_save.setStyleSheet("""
-            QPushButton { background-color: #4CAF50; color: white; font-weight: bold;
-                          padding: 8px; border-radius: 4px; font-size: 12px; border: none; }
-            QPushButton:hover { background-color: #388E3C; }
-            QPushButton:disabled { background-color: #555; color: #888; }
-        """)
-        self.btn_save.setEnabled(False)
-        self.btn_save.clicked.connect(self._save_report)
-        control_layout.addWidget(self.btn_save)
 
         control_layout.addStretch(1)
 
@@ -311,6 +401,61 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
 
+    def _export_spectrum(self):
+        if self._last_on is None:
+            QMessageBox.warning(self, "Внимание", "Нет данных спектра для экспорта.")
+            return
+
+        import numpy as np
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"pemin_spectrum_{timestamp}.npz"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Экспорт спектра", default_name, "NumPy Archive (*.npz)"
+        )
+        if not file_path:
+            return
+
+        try:
+            signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
+            sig_freqs = np.array([s.frequency_hz for s in signals])
+            sig_diffs = np.array([s.amplitude_diff_db for s in signals])
+            sig_on    = np.array([s.amplitude_on_db for s in signals])
+            sig_off   = np.array([s.amplitude_off_db for s in signals])
+            sig_v1    = np.array([s.verified_1 if s.verified_1 is not None else float("nan")
+                                  for s in signals])
+            sig_v2    = np.array([s.verified_2 if s.verified_2 is not None else float("nan")
+                                  for s in signals])
+            sig_status = np.array([s.status_color if s.status_color else "" for s in signals])
+
+            np.savez_compressed(
+                file_path,
+                # Спектры
+                frequencies_hz=self._last_on.frequencies_hz,
+                amplitudes_on_db=self._last_on.amplitudes_db,
+                amplitudes_off_db=self._last_off.amplitudes_db,
+                diff_db=self._last_diff,
+                # Обнаруженные сигналы
+                signal_frequencies_hz=sig_freqs,
+                signal_diff_db=sig_diffs,
+                signal_on_db=sig_on,
+                signal_off_db=sig_off,
+                signal_verified_1=sig_v1,
+                signal_verified_2=sig_v2,
+                signal_status=sig_status,
+                # Параметры измерения
+                cfg_start_hz=np.float64(self.cfg.start_freq_hz),
+                cfg_stop_hz=np.float64(self.cfg.stop_freq_hz),
+                cfg_threshold_db=np.float64(self.cfg.threshold_db),
+                cfg_averaging_count=np.int32(self.cfg.averaging_count),
+                cfg_sdr_gain_db=np.float64(self.cfg.sdr_gain_db),
+                cfg_use_max_hold=np.bool_(self.cfg.use_max_hold),
+                cfg_rbw_hz=np.float64(self._last_on.rbw_hz),
+                timestamp=np.float64(self._last_on.timestamp),
+            )
+            QMessageBox.information(self, "Успех", f"Спектр сохранён:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+
     # ------------------------------------------------------------------
     # Управление процессом
     # ------------------------------------------------------------------
@@ -326,7 +471,10 @@ class MainWindow(QMainWindow):
 
     def _on_control_button_clicked(self):
         if self.current_step == "idle":
-            self._connect_and_start()
+            if self.scan_mode == "demo":
+                self._load_measurement()
+            else:
+                self._connect_and_start()
         else:
             if self.wf:
                 self.wf.resume()
@@ -337,6 +485,7 @@ class MainWindow(QMainWindow):
     def _connect_and_start(self):
         if not self._apply_settings_to_cfg():
             return
+        self.cfg.skip_verification = (self.scan_mode == "quick")
         try:
             self.ctrl.connect()
             self.ctrl.configure(self.cfg)
@@ -350,7 +499,8 @@ class MainWindow(QMainWindow):
         self.lbl_instruction.setText("⏳ <b>Запуск процесса...</b>")
         self.btn_action.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        self.btn_save.setEnabled(False)
+        self.act_save.setEnabled(False)
+        self.act_export_spectrum.setEnabled(False)
         self.prog.setValue(0)
 
         self.table.setRowCount(0)
@@ -435,6 +585,129 @@ class MainWindow(QMainWindow):
                 except ValueError:
                     pass
 
+    # ------------------------------------------------------------------
+    # Работа с архивом NPZ
+    # ------------------------------------------------------------------
+
+    def _load_npz(self, title: str):
+        """Открывает диалог выбора NPZ-файла и возвращает загруженный архив или None."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, title, "", "NumPy Archive (*.npz)"
+        )
+        if not path:
+            return None
+        try:
+            return np.load(path, allow_pickle=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть файл:\n{e}")
+            return None
+
+    @staticmethod
+    def _npz_to_spectra(data):
+        """Восстанавливает объекты Spectrum ON/OFF и массив diff из NPZ-архива."""
+        rbw = float(data['cfg_rbw_hz'])
+        ts  = float(data['timestamp'])
+        freqs = data['frequencies_hz']
+        on = Spectrum(frequencies_hz=freqs, amplitudes_db=data['amplitudes_on_db'],
+                      rbw_hz=rbw, timestamp=ts)
+        off = Spectrum(frequencies_hz=freqs, amplitudes_db=data['amplitudes_off_db'],
+                       rbw_hz=rbw, timestamp=ts)
+        diff = data['diff_db']
+        return on, off, diff
+
+    @staticmethod
+    def _npz_to_signals(data):
+        """Восстанавливает список PEMINSignal из NPZ-архива (если они там есть)."""
+        if 'signal_frequencies_hz' not in data:
+            return []
+        rbw = float(data['cfg_rbw_hz'])
+        signals = []
+        for i in range(len(data['signal_frequencies_hz'])):
+            def _bool_or_none(val):
+                return None if np.isnan(float(val)) else bool(val)
+
+            sig = PEMINSignal(
+                frequency_hz=float(data['signal_frequencies_hz'][i]),
+                amplitude_diff_db=float(data['signal_diff_db'][i]),
+                amplitude_on_db=float(data['signal_on_db'][i]),
+                amplitude_off_db=float(data['signal_off_db'][i]),
+                rbw_hz=rbw,
+                verified_1=_bool_or_none(data['signal_verified_1'][i]),
+                verified_2=_bool_or_none(data['signal_verified_2'][i]),
+                status_color=str(data['signal_status'][i]),
+            )
+            signals.append(sig)
+        return signals
+
+    def _load_measurement(self):
+        """Загружает NPZ и отображает измерение без SDR (демо/архив)."""
+        data = self._load_npz("Загрузить измерение")
+        if data is None:
+            return
+
+        on, off, diff = self._npz_to_spectra(data)
+        signals = self._npz_to_signals(data)
+
+        # Восстанавливаем состояние как после реального измерения
+        self.wf = types.SimpleNamespace(signals=signals)
+        self._plot_data(on, off, diff)
+
+        self.act_save.setEnabled(bool(signals))
+        self.act_export_spectrum.setEnabled(True)
+
+        from datetime import datetime as dt
+        ts = dt.fromtimestamp(on.timestamp).strftime("%d.%m.%Y %H:%M:%S")
+        self.lbl_instruction.setText(
+            f"<b>📂 Архив загружен</b><br>"
+            f"<span style='color:#aaa'>Время измерения: {ts}<br>"
+            f"Сигналов: {len(signals)}</span>"
+        )
+
+    def _compare_sessions(self):
+        """Загружает два NPZ и накладывает спектры на один график."""
+        data_a = self._load_npz("Загрузить первое измерение (A)")
+        if data_a is None:
+            return
+        data_b = self._load_npz("Загрузить второе измерение (B)")
+        if data_b is None:
+            return
+
+        on_a, off_a, diff_a = self._npz_to_spectra(data_a)
+        on_b, off_b, diff_b = self._npz_to_spectra(data_b)
+
+        self.plot.clear()
+        self.table.setRowCount(0)
+        self.wf = None
+
+        f_a = on_a.frequencies_hz / 1e6
+        f_b = on_b.frequencies_hz / 1e6
+
+        self.plot.add("ON — сессия A",   f_a, on_a.amplitudes_db,  "#FFC107", width=1)
+        self.plot.add("ON — сессия B",   f_b, on_b.amplitudes_db,  "#00BCD4", width=1)
+        self.plot.add("Δ — сессия A",    f_a, diff_a,              "#FF5722", fill=(255, 87, 34, 60))
+        self.plot.add("Δ — сессия B",    f_b, diff_b,              "#AB47BC", fill=(171, 71, 188, 60))
+
+        x_min = min(float(f_a.min()), float(f_b.min()))
+        x_max = max(float(f_a.max()), float(f_b.max()))
+        self.plot.set_freq_range(x_min, x_max)
+        self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
+        self.plot.reset_zoom()
+
+        self._last_on = on_a
+        self._last_off = off_a
+        self._last_diff = diff_a
+        self.act_export_spectrum.setEnabled(True)
+        self.act_save.setEnabled(False)
+
+        from datetime import datetime as dt
+        ts_a = dt.fromtimestamp(on_a.timestamp).strftime("%d.%m.%Y %H:%M")
+        ts_b = dt.fromtimestamp(on_b.timestamp).strftime("%d.%m.%Y %H:%M")
+        self.lbl_instruction.setText(
+            f"<b>⚖ Режим сравнения</b><br>"
+            f"<span style='color:#FFC107'>■</span> Сессия A: {ts_a}<br>"
+            f"<span style='color:#00BCD4'>■</span> Сессия B: {ts_b}"
+        )
+
     def _refresh_markers(self):
         """Перерисовывает маркеры на графике по текущему состоянию сигналов.
         Вызывается после каждого изменения статуса сигнала во время верификации."""
@@ -465,7 +738,8 @@ class MainWindow(QMainWindow):
                               padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
                 QPushButton:hover { background-color: #388E3C; }
             """)
-            self.btn_save.setEnabled(True)
+            self.act_save.setEnabled(True)
+            self.act_export_spectrum.setEnabled(self._last_on is not None)
         else:
             self.btn_action.setStyleSheet("""
                 QPushButton { background-color: #FF9800; color: white; font-weight: bold;
@@ -500,7 +774,11 @@ class MainWindow(QMainWindow):
         """)
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        self.btn_save.setEnabled(False)
+        self.act_save.setEnabled(False)
+        self.act_export_spectrum.setEnabled(False)
+        self._last_on = None
+        self._last_off = None
+        self._last_diff = None
         self._set_settings_enabled(True)
 
     def _on_thread_finished(self):
@@ -520,6 +798,9 @@ class MainWindow(QMainWindow):
         """)
 
     def _plot_data(self, on, off, diff):
+        self._last_on = on
+        self._last_off = off
+        self._last_diff = diff
         f_mhz = on.frequencies_hz / 1e6
         x_min, x_max = float(f_mhz.min()), float(f_mhz.max())
 

@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 *.pyo
 *.csv
+*.npz
 .vscode/

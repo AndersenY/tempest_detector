@@ -27,3 +27,5 @@ class PanoramaConfig:
     # Если два кандидата ближе — остаётся только сильнейший.
     # 0 = фильтр отключён.
     min_separation_hz: float = 10_000.0
+    # Пропустить верификацию (быстрое сканирование)
+    skip_verification: bool = False

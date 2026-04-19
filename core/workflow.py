@@ -77,6 +77,15 @@ class MeasurementWorkflow:
             if count == 0:
                 msg += "\nПопробуйте уменьшить порог или изменить положение антенны."
 
+            if self.cfg.skip_verification:
+                self.on_progress(100)
+                self.on_user_action_needed(
+                    msg,
+                    "Быстрое сканирование завершено. Верификация пропущена.",
+                    "СБРОС И НОВЫЙ ПОИСК"
+                )
+                return
+
             self.on_user_action_needed(
                 msg,
                 "Убедитесь, что тест ВСЕ ЕЩЕ ВКЛЮЧЕН.\nНажмите для Верификации 1.",
