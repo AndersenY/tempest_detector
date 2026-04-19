@@ -11,10 +11,10 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QCheckBox, QFormLayout)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QColor, QAction, QActionGroup
-from core.workflow import MeasurementWorkflow
 from core.config import PanoramaConfig
 from core.sdr_controller import SDRController
 from core.models import Spectrum, PEMINSignal
+from core.methods import PanoramaDiffWorkflow, HarmonicSearchWorkflow
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 
 
@@ -27,7 +27,7 @@ class Worker(QThread):
     error = pyqtSignal(str)
     finished_signal = pyqtSignal()
 
-    def __init__(self, workflow: MeasurementWorkflow):
+    def __init__(self, workflow):
         super().__init__()
         self.wf = workflow
         self.wf.on_status = self.status.emit
@@ -106,9 +106,9 @@ class MainWindow(QMainWindow):
 
         menu_mode.addSeparator()
 
-        self.act_mode_harmonic = QAction("Метод поиска по гармоникам  (не реализован)", self)
+        self.act_mode_harmonic = QAction("〜  Метод поиска по гармоникам", self)
         self.act_mode_harmonic.setCheckable(True)
-        self.act_mode_harmonic.setEnabled(False)
+        self.act_mode_harmonic.triggered.connect(lambda: self._set_scan_mode("harmonic"))
         mode_group.addAction(self.act_mode_harmonic)
         menu_mode.addAction(self.act_mode_harmonic)
 
@@ -164,8 +164,12 @@ class MainWindow(QMainWindow):
             self.btn_action.setText("ПОДКЛЮЧИТЬ И НАЧАТЬ")
         elif mode == "quick":
             self.btn_action.setText("БЫСТРОЕ СКАНИРОВАНИЕ")
+        elif mode == "harmonic":
+            self.btn_action.setText("ПОИСК ПО ГАРМОНИКАМ")
         elif mode == "demo":
             self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
+        # Колонка «Гармоники» — только для harmonic-режима
+        self.table.setColumnHidden(4, mode != "harmonic")
 
     def _init_ui(self):
         w = QWidget()
@@ -219,12 +223,13 @@ class MainWindow(QMainWindow):
         table_layout.setContentsMargins(5, 5, 5, 5)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
+        self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(
-            ["Частота (МГц)", "Δ дБ", "ON дБ", "OFF дБ", "Статус"]
+            ["Частота (МГц)", "Δ дБ", "ON дБ", "OFF дБ", "Гармоники", "Статус"]
         )
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnHidden(4, True)   # «Гармоники» — скрыта до активации метода
         self.table.setAlternatingRowColors(True)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self.table.setStyleSheet("""
@@ -493,6 +498,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка подключения", str(e))
 
+    def _make_workflow(self):
+        if self.scan_mode == "harmonic":
+            return HarmonicSearchWorkflow(self.ctrl, self.cfg)
+        return PanoramaDiffWorkflow(self.ctrl, self.cfg)
+
     def _start_workflow(self):
         self.current_step = "running"
         self._set_settings_enabled(False)
@@ -506,7 +516,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self.plot.clear()
 
-        self.wf = MeasurementWorkflow(self.ctrl, self.cfg)
+        self.wf = self._make_workflow()
         self.thread = Worker(self.wf)
 
         Q = Qt.ConnectionType.QueuedConnection
@@ -864,40 +874,56 @@ class MainWindow(QMainWindow):
             item_on   = QTableWidgetItem(f"{s.amplitude_on_db:.1f}")
             item_off  = QTableWidgetItem(f"{s.amplitude_off_db:.1f}")
 
-            # Определяем статус и цвет по status_color из workflow
-            color_map = {
-                "yellow": (COLOR_WARN,     "⏳ В1 OK"),
-                "green":  (COLOR_SUCCESS,  "✅ ПЭМИН"),
-                "red":    (COLOR_FAIL_V1,  "❌ Брак (В1)"),
-                "blue":   (COLOR_EXTERNAL, "〇 Внешний / Двойной брак"),
-            }
+            # Колонка гармоник
+            if s.detection_method == "harmonic_search":
+                if s.harmonic_count > 0:
+                    harm_freqs = ", ".join(
+                        f"{f / 1e6:.3f}" for f in s.harmonic_frequencies_hz
+                    )
+                    harm_text = f"{s.harmonic_count}  [{harm_freqs} МГц]"
+                else:
+                    harm_text = "—"
+                item_harm = QTableWidgetItem(harm_text)
+            else:
+                item_harm = QTableWidgetItem("—")
 
-            # Уточняем текст статуса для промежуточных состояний
-            v1 = s.verified_1
-            v2 = s.verified_2
-
-            if v1 is None and v2 is None:
-                status_text = "⏳ Ожидание"
-                color_hex = COLOR_WAIT
-            elif v1 is not None and v2 is None:
-                # После В1, до В2
-                if v1:
-                    status_text = "⏳ В1 OK"
+            # Статус и цвет
+            if s.detection_method == "harmonic_search":
+                if s.status_color == "green":
+                    status_text = f"✅ ПЭМИН ({s.harmonic_count} гарм.)"
+                    color_hex = COLOR_SUCCESS
+                elif s.status_color == "yellow":
+                    status_text = f"⏳ Неопределённо ({s.harmonic_count} гарм.)"
                     color_hex = COLOR_WARN
                 else:
-                    status_text = "❌ Брак (В1)"
+                    status_text = "❌ Гармоник нет"
                     color_hex = COLOR_FAIL_V1
             else:
-                # Финальный результат: берём из color_map по status_color
-                color_hex, status_text = color_map.get(
-                    s.status_color, (COLOR_WAIT, "—")
-                )
-                # Уточняем текст для синего: различаем два случая
-                if s.status_color == "blue":
-                    if v1 and not v2:
-                        status_text = "〇 Внешний (В2)"
+                # Метод разности панорам — прежняя логика
+                color_map = {
+                    "yellow": (COLOR_WARN,     "⏳ В1 OK"),
+                    "green":  (COLOR_SUCCESS,  "✅ ПЭМИН"),
+                    "red":    (COLOR_FAIL_V1,  "❌ Брак (В1)"),
+                    "blue":   (COLOR_EXTERNAL, "〇 Внешний / Двойной брак"),
+                }
+                v1 = s.verified_1
+                v2 = s.verified_2
+                if v1 is None and v2 is None:
+                    status_text = "⏳ Ожидание"
+                    color_hex = COLOR_WAIT
+                elif v1 is not None and v2 is None:
+                    if v1:
+                        status_text = "⏳ В1 OK"
+                        color_hex = COLOR_WARN
                     else:
-                        status_text = "〇 Двойной брак"
+                        status_text = "❌ Брак (В1)"
+                        color_hex = COLOR_FAIL_V1
+                else:
+                    color_hex, status_text = color_map.get(
+                        s.status_color, (COLOR_WAIT, "—")
+                    )
+                    if s.status_color == "blue":
+                        status_text = "〇 Внешний (В2)" if (v1 and not v2) else "〇 Двойной брак"
 
             item_status = QTableWidgetItem(status_text)
             item_status.setForeground(QColor(color_hex))
@@ -906,7 +932,8 @@ class MainWindow(QMainWindow):
             self.table.setItem(i, 1, item_diff)
             self.table.setItem(i, 2, item_on)
             self.table.setItem(i, 3, item_off)
-            self.table.setItem(i, 4, item_status)
+            self.table.setItem(i, 4, item_harm)
+            self.table.setItem(i, 5, item_status)
 
         self.table.setUpdatesEnabled(True)
         self.table.setSortingEnabled(True)

@@ -29,3 +29,11 @@ class PanoramaConfig:
     min_separation_hz: float = 10_000.0
     # Пропустить верификацию (быстрое сканирование)
     skip_verification: bool = False
+
+    # ── Настройки метода поиска по гармоникам ─────────────────────────
+    # Максимальное число гармоник для проверки (2f, 3f, ..., N·f)
+    harmonic_max_count: int = 6
+    # Минимальное число найденных гармоник для подтверждения ПЭМИН
+    harmonic_min_count: int = 2
+    # Допуск поиска гармоники (Гц). 0 = авто (2 бина RBW).
+    harmonic_tolerance_hz: float = 0.0

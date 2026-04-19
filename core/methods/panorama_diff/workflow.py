@@ -2,18 +2,24 @@ import time
 import threading
 import numpy as np
 from typing import Callable, List
-from .sdr_controller import SDRController
+from ...sdr_controller import SDRController
+from ...config import PanoramaConfig
+from ...models import Spectrum, PEMINSignal
+from ..base import AbstractDetectionMethod
 from .processor import PanoramaProcessor
-from .models import Spectrum, PEMINSignal
-from .config import PanoramaConfig
 
 
-class MeasurementWorkflow:
+class PanoramaDiffWorkflow(AbstractDetectionMethod):
+    """
+    Метод разности панорам (ON − OFF).
+    Фазы: фон → сигнал → В1 (стабильность ВКЛ) → В2 (чистота ВЫКЛ).
+    """
+
     def __init__(self, ctrl: SDRController, cfg: PanoramaConfig):
         self.ctrl = ctrl
         self.cfg = cfg
         self.proc = PanoramaProcessor(cfg)
-        self.signals: List[PEMINSignal] = []
+        self._signals: List[PEMINSignal] = []
 
         self._pause_event = threading.Event()
         self._stop_flag = False
@@ -22,7 +28,11 @@ class MeasurementWorkflow:
         self.on_progress = lambda p: None
         self.on_data = lambda a, b, c: None
         self.on_user_action_needed = lambda title, desc, btn: None
-        self.on_signal_updated = lambda: None   # вызывается после смены статуса каждого сигнала
+        self.on_signal_updated = lambda: None
+
+    @property
+    def signals(self) -> List[PEMINSignal]:
+        return self._signals
 
     def _wait_for_user(self):
         self._pause_event.clear()
@@ -66,13 +76,13 @@ class MeasurementWorkflow:
             self.on_progress(50)
 
             self.on_status("АНАЛИЗ СПЕКТРА...")
-            diff = self.proc.subtract(on_spec, self._off_spectrum)
-            self.on_data(on_spec, self._off_spectrum, diff)
+            diff = self.proc.subtract(on_spec, off_spec)
+            self.on_data(on_spec, off_spec, diff)
 
-            self.signals = self.proc.detect(diff, on_spec)
+            self._signals = self.proc.detect(diff, on_spec)
             self.on_progress(70)
 
-            count = len(self.signals)
+            count = len(self._signals)
             msg = f"ОБНАРУЖЕНО СИГНАЛОВ: {count}"
             if count == 0:
                 msg += "\nПопробуйте уменьшить порог или изменить положение антенны."
@@ -95,13 +105,12 @@ class MeasurementWorkflow:
 
             # --- ЭТАП 3: ВЕРИФИКАЦИЯ 1 (ON Stability) ---
             self.on_status("ЭТАП 3: ВЕРИФИКАЦИЯ 1 (Стабильность ВКЛ)")
-            total = len(self.signals)
+            total = len(self._signals)
 
             if total > 0:
                 verify_on_spec = self.ctrl.capture_spectrum()
-
                 _last_update = time.monotonic()
-                for i, sig in enumerate(self.signals):
+                for i, sig in enumerate(self._signals):
                     if self._stop_flag:
                         raise InterruptedError("Stopped")
 
@@ -114,20 +123,14 @@ class MeasurementWorkflow:
 
                     passed = self.proc.verify_1(sig, current_amp)
                     sig.verified_1 = passed
+                    sig.status_color = "yellow" if passed else "red"
 
-                    if passed:
-                        sig.status_color = "yellow"  # В1 OK, ждём В2
-                    else:
-                        sig.status_color = "red"     # В1 провален — уже брак
-
-                    # Обновляем GUI не чаще 10 раз/с, чтобы не заваливать очередь событий
                     now = time.monotonic()
                     if now - _last_update >= 0.1 or (i + 1) == total:
                         self.on_signal_updated()
                         _last_update = now
 
-                    progress_val = 70 + int(((i + 1) / total) * 15)
-                    self.on_progress(progress_val)
+                    self.on_progress(70 + int(((i + 1) / total) * 15))
 
             self.on_user_action_needed(
                 "ВЕРИФИКАЦИЯ 1 ЗАВЕРШЕНА",
@@ -140,9 +143,8 @@ class MeasurementWorkflow:
             self.on_status("ЭТАП 4: ВЕРИФИКАЦИЯ 2 (Чистота ВЫКЛ)")
             if total > 0:
                 verify_off_spec = self.ctrl.capture_spectrum()
-
                 _last_update = time.monotonic()
-                for i, sig in enumerate(self.signals):
+                for i, sig in enumerate(self._signals):
                     if self._stop_flag:
                         raise InterruptedError("Stopped")
 
@@ -159,18 +161,15 @@ class MeasurementWorkflow:
                         sig.status_color = "green"
                     elif sig.verified_1 and not passed:
                         sig.status_color = "blue"
-                    elif not sig.verified_1 and passed:
-                        sig.status_color = "red"
                     else:
-                        sig.status_color = "blue"
+                        sig.status_color = "blue" if passed else "red"
 
                     now = time.monotonic()
                     if now - _last_update >= 0.1 or (i + 1) == total:
                         self.on_signal_updated()
                         _last_update = now
 
-                    progress_val = 85 + int(((i + 1) / total) * 15)
-                    self.on_progress(progress_val)
+                    self.on_progress(85 + int(((i + 1) / total) * 15))
 
             self.on_progress(100)
             self.on_user_action_needed(
