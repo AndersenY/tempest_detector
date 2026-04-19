@@ -91,6 +91,7 @@ class MeasurementWorkflow:
             if total > 0:
                 verify_on_spec = self.ctrl.capture_spectrum()
 
+                _last_update = time.monotonic()
                 for i, sig in enumerate(self.signals):
                     if self._stop_flag:
                         raise InterruptedError("Stopped")
@@ -105,14 +106,16 @@ class MeasurementWorkflow:
                     passed = self.proc.verify_1(sig, current_amp)
                     sig.verified_1 = passed
 
-                    # После В1 финальный цвет ещё не известен — ставим промежуточный.
-                    # Используем "yellow" как нейтральный статус ожидания В2.
                     if passed:
                         sig.status_color = "yellow"  # В1 OK, ждём В2
                     else:
                         sig.status_color = "red"     # В1 провален — уже брак
 
-                    self.on_signal_updated()  # обновляем график сразу
+                    # Обновляем GUI не чаще 10 раз/с, чтобы не заваливать очередь событий
+                    now = time.monotonic()
+                    if now - _last_update >= 0.1 or (i + 1) == total:
+                        self.on_signal_updated()
+                        _last_update = now
 
                     progress_val = 70 + int(((i + 1) / total) * 15)
                     self.on_progress(progress_val)
@@ -129,6 +132,7 @@ class MeasurementWorkflow:
             if total > 0:
                 verify_off_spec = self.ctrl.capture_spectrum()
 
+                _last_update = time.monotonic()
                 for i, sig in enumerate(self.signals):
                     if self._stop_flag:
                         raise InterruptedError("Stopped")
@@ -142,25 +146,19 @@ class MeasurementWorkflow:
                     passed = self.proc.verify_2(sig, current_noise)
                     sig.verified_2 = passed
 
-                    # Финальная цветовая логика (п. 7.4 РЭ):
-                    #
-                    # В1 пройден + В2 пройден → ПЭМИН (зелёный)
-                    # В1 пройден + В2 провален → внешняя помеха, появилась после
-                    #   измерения фона и продолжает работать (синий — как в оригинальном
-                    #   Navigator: зелёная метка при В2 fail означала "внешний сигнал")
-                    # В1 провален + В2 пройден → нестабильный сигнал, помеха (красный)
-                    # В1 провален + В2 провален → двойной брак (синий, по аналогии
-                    #   с оригинальным Navigator, где такая точка помечалась синим)
                     if sig.verified_1 and passed:
-                        sig.status_color = "green"   # ПЭМИН
+                        sig.status_color = "green"
                     elif sig.verified_1 and not passed:
-                        sig.status_color = "blue"    # Внешняя помеха (В1 OK, В2 fail)
+                        sig.status_color = "blue"
                     elif not sig.verified_1 and passed:
-                        sig.status_color = "red"     # Нестабильный сигнал (В1 fail)
+                        sig.status_color = "red"
                     else:
-                        sig.status_color = "blue"    # Двойной брак (В1 fail + В2 fail)
+                        sig.status_color = "blue"
 
-                    self.on_signal_updated()  # обновляем график сразу
+                    now = time.monotonic()
+                    if now - _last_update >= 0.1 or (i + 1) == total:
+                        self.on_signal_updated()
+                        _last_update = now
 
                     progress_val = 85 + int(((i + 1) / total) * 15)
                     self.on_progress(progress_val)

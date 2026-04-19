@@ -82,6 +82,9 @@ class SDRController:
             if len(raw) < samples_per_chunk:
                 break
 
+            # Уступаем GIL главному потоку на 10 мс между каждым USB-чтением
+            time.sleep(0.01)
+
             # Применение окна
             windowed_samples = np.array(raw) * window
             

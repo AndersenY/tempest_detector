@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QProgressBar, QMessageBox, QGroupBox, QHeaderView,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
                              QCheckBox, QFormLayout)
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QCoreApplication
+from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QColor
 from core.workflow import MeasurementWorkflow
 from core.config import PanoramaConfig
@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self.wf = None
         self.thread = None
         self.current_step = "idle"
+        self._resetting = False
 
         self._init_ui()
 
@@ -319,36 +320,12 @@ class MainWindow(QMainWindow):
 
     def _reset_to_start(self):
         """Прерывает текущий процесс (если запущен) и возвращает программу в начальное состояние."""
-        if self.thread and self.thread.isRunning():
-            if self.wf:
-                self.wf.stop()
-            self.thread.wait(2000)
+        self._resetting = True
+        if self.wf:
+            self.wf.stop()
+        # Не ждём завершения потока — он завершится сам через _on_thread_finished
 
-        self.current_step = "idle"
-        self.wf = None
-        self.thread = None
-
-        self.plot.clear()
-        self.table.setRowCount(0)
-        self.prog.setValue(0)
-
-        self.lbl_instruction.setText("Подключите SDR для начала работы.")
-        self.lbl_instruction.setStyleSheet(
-            "color: #e0e0e0; font-size: 13px; padding: 10px;"
-            "background-color: #2b2b2b; border: 1px solid #444; border-radius: 4px;"
-        )
-
-        self.btn_action.setText("ПОДКЛЮЧИТЬ И НАЧАТЬ")
-        self.btn_action.setStyleSheet("""
-            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
-                          padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
-            QPushButton:hover { background-color: #1976D2; }
-            QPushButton:disabled { background-color: #444; color: #888; }
-        """)
-        self.btn_action.setEnabled(True)
-        self.btn_stop.setEnabled(False)
-        self.btn_save.setEnabled(False)
-        self._set_settings_enabled(True)
+        self._do_ui_reset()
 
     def _on_control_button_clicked(self):
         if self.current_step == "idle":
@@ -385,13 +362,14 @@ class MainWindow(QMainWindow):
         self.wf = MeasurementWorkflow(self.ctrl, self.cfg)
         self.thread = Worker(self.wf)
 
-        self.thread.status.connect(lambda s: self.lbl_instruction.setText(s))
-        self.thread.progress.connect(lambda v: self.prog.setValue(int(v)))
-        self.thread.data.connect(self._plot_data)
-        self.thread.action_needed.connect(self._on_action_needed)
-        self.thread.signals_updated.connect(self._refresh_markers)
-        self.thread.error.connect(lambda e: QMessageBox.critical(self, "Ошибка", e))
-        self.thread.finished_signal.connect(self._on_thread_finished)
+        Q = Qt.ConnectionType.QueuedConnection
+        self.thread.status.connect(lambda s: self.lbl_instruction.setText(s), Q)
+        self.thread.progress.connect(lambda v: self.prog.setValue(int(v)), Q)
+        self.thread.data.connect(self._plot_data, Q)
+        self.thread.action_needed.connect(self._on_action_needed, Q)
+        self.thread.signals_updated.connect(self._refresh_markers, Q)
+        self.thread.error.connect(lambda e: QMessageBox.critical(self, "Ошибка", e), Q)
+        self.thread.finished_signal.connect(self._on_thread_finished, Q)
 
         self.thread.start()
 
@@ -436,8 +414,40 @@ class MainWindow(QMainWindow):
         if self.wf and hasattr(self.wf, "signals"):
             self._update_table_only()
 
+    def _do_ui_reset(self):
+        self.current_step = "idle"
+        self.wf = None
+        self.thread = None
+        self._resetting = False
+
+        self.plot.clear()
+        self.table.setRowCount(0)
+        self.prog.setValue(0)
+
+        self.lbl_instruction.setText("Подключите SDR для начала работы.")
+        self.lbl_instruction.setStyleSheet(
+            "color: #e0e0e0; font-size: 13px; padding: 10px;"
+            "background-color: #2b2b2b; border: 1px solid #444; border-radius: 4px;"
+        )
+        self.btn_action.setText("ПОДКЛЮЧИТЬ И НАЧАТЬ")
+        self.btn_action.setStyleSheet("""
+            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
+                          padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
+            QPushButton:hover { background-color: #1976D2; }
+            QPushButton:disabled { background-color: #444; color: #888; }
+        """)
+        self.btn_action.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.btn_save.setEnabled(False)
+        self._set_settings_enabled(True)
+
     def _on_thread_finished(self):
-        self.btn_stop.setEnabled(True)   # можно сбросить и начать заново
+        if self._resetting:
+            # Сброс уже выполнен через _reset_to_start, просто игнорируем
+            self._resetting = False
+            return
+
+        self.btn_stop.setEnabled(True)
         self.current_step = "idle"
         self._set_settings_enabled(True)
         self.btn_action.setText("НОВЫЙ ПОИСК")
@@ -553,8 +563,6 @@ class MainWindow(QMainWindow):
 
         self.table.setUpdatesEnabled(True)
         self.table.setSortingEnabled(True)
-        self.table.repaint()
-        QCoreApplication.processEvents()
 
 
 if __name__ == "__main__":
