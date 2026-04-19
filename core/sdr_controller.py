@@ -28,96 +28,125 @@ class SDRController:
                 pass
             self.sdr = None
 
+    # Максимально безопасная полоса RTL-SDR (при большей — нестабильность)
+    _SAFE_SR   = 2_400_000   # sample rate на один шаг
+    _USABLE_BW = 2_000_000   # полезная полоса шага (отбрасываем ±10% краёв)
+
     def configure(self, cfg: PanoramaConfig) -> None:
         if not self.sdr:
             raise RuntimeError("SDR не подключен.")
-        
+
         self._cfg = cfg
-        center = (cfg.start_freq_hz + cfg.stop_freq_hz) / 2
         span = cfg.stop_freq_hz - cfg.start_freq_hz
-        
-        # RTL-SDR ограничение: 250 кГц – 2.8 МГц
-        # Добавляем небольшой запас (5-10%), чтобы края диапазона не обрезались фильтрами
-        sample_rate = np.clip(span * 1.1, 250e3, 2.8e6)
-        
-        self.sdr.sample_rate = int(sample_rate)
-        self.sdr.center_freq = int(center)
-        
+
+        if span <= self._USABLE_BW:
+            # Один захват: sample_rate покрывает весь диапазон
+            sr = int(np.clip(span * 1.15, 250_000, self._SAFE_SR))
+            self.sdr.center_freq = int((cfg.start_freq_hz + cfg.stop_freq_hz) / 2)
+        else:
+            # Sweep-режим: фиксированный sample_rate, center будет меняться при захвате
+            sr = self._SAFE_SR
+            self.sdr.center_freq = int(cfg.start_freq_hz + sr / 2)
+
+        self.sdr.sample_rate = sr
+
         if cfg.use_agc:
             self.sdr.gain = 'AUTO'
         else:
             self.sdr.gain = cfg.sdr_gain_db
 
+    # ------------------------------------------------------------------
+
     def capture_spectrum(self) -> Spectrum:
         if not self.sdr or not self._cfg:
             raise RuntimeError("SDR не настроен")
-            
+
         cfg = self._cfg
+        span = cfg.stop_freq_hz - cfg.start_freq_hz
 
-        # Очистка буфера USB (важно для RTL-SDR)
+        if span <= self._USABLE_BW:
+            return self._capture_single(cfg.start_freq_hz, cfg.stop_freq_hz, cfg)
+        else:
+            return self._capture_sweep(cfg)
+
+    # ------------------------------------------------------------------
+
+    def _capture_single(self, start_hz: float, stop_hz: float,
+                        cfg: PanoramaConfig) -> Spectrum:
+        """Один захват с текущим center_freq."""
         try:
-            self.sdr.read_bytes(1024 * 32) 
-        except:
+            self.sdr.read_bytes(1024 * 16)
+        except Exception:
             pass
-        
-        # Ограничение буфера памяти (макс 1M сэмплов за раз, читаем циклом если надо)
-        # Но для усреднения нам нужно total_samples
-        samples_per_chunk = cfg.fft_size
-        num_chunks = cfg.averaging_count
-        
-        # Инициализация аккумуляторов
-        avg_sum_power = np.zeros(cfg.fft_size, dtype=np.float64)
-        max_hold_power = np.full(cfg.fft_size, -np.inf, dtype=np.float64)
-        
-        # Предварительный расчет окна (Hann)
-        # Окно снижает уровень боковых лепестков, что критично для метода троек
-        window = np.hanning(samples_per_chunk)
 
-        for _ in range(num_chunks):
+        window = np.hanning(cfg.fft_size)
+        avg_power = np.zeros(cfg.fft_size, dtype=np.float64)
+        max_power = np.full(cfg.fft_size, -np.inf, dtype=np.float64)
+
+        for _ in range(cfg.averaging_count):
+            time.sleep(0.01)
             try:
-                raw = self.sdr.read_samples(samples_per_chunk)
+                raw = self.sdr.read_samples(cfg.fft_size)
             except Exception as e:
                 raise RuntimeError(f"Ошибка чтения сэмплов: {e}")
-
-            if len(raw) < samples_per_chunk:
+            if len(raw) < cfg.fft_size:
                 break
+            fft_vals = np.fft.fftshift(np.fft.fft(np.array(raw) * window))
+            power = np.abs(fft_vals) ** 2
+            avg_power += power
+            np.maximum(max_power, power, out=max_power)
 
-            # Уступаем GIL главному потоку на 10 мс между каждым USB-чтением
-            time.sleep(0.01)
-
-            # Применение окна
-            windowed_samples = np.array(raw) * window
-            
-            # БПФ
-            fft_vals = np.fft.fftshift(np.fft.fft(windowed_samples))
-            power = np.abs(fft_vals)**2
-            
-            # Накопление для Average
-            avg_sum_power += power
-            
-            # Накопление для MaxHold
-            np.maximum(max_hold_power, power, out=max_hold_power)
-
-        # Выбор детектора
-        if cfg.use_max_hold:
-            power_sel = max_hold_power
-        else:
-            power_sel = avg_sum_power / num_chunks
-            
-        # Перевод в дБ
-        # Добавляем малое число, чтобы избежать log(0)
+        power_sel = max_power if cfg.use_max_hold else avg_power / cfg.averaging_count
         db_vals = 10 * np.log10(power_sel + 1e-12) + cfg.calibration_offset_db
-        
-        # Частотная ось
-        freqs = np.fft.fftshift(np.fft.fftfreq(cfg.fft_size, d=1/self.sdr.sample_rate))
+
+        sr = self.sdr.sample_rate
+        freqs = np.fft.fftshift(np.fft.fftfreq(cfg.fft_size, d=1.0 / sr))
         freqs += self.sdr.center_freq
-        
-        # Фильтрация по диапазону (mask)
-        mask = (freqs >= cfg.start_freq_hz) & (freqs <= cfg.stop_freq_hz)
-        
+
+        mask = (freqs >= start_hz) & (freqs <= stop_hz)
         return Spectrum(
-            frequencies_hz=freqs[mask], 
-            amplitudes_db=db_vals[mask], 
-            rbw_hz=self.sdr.sample_rate / cfg.fft_size, 
-            timestamp=time.time()
+            frequencies_hz=freqs[mask],
+            amplitudes_db=db_vals[mask],
+            rbw_hz=sr / cfg.fft_size,
+            timestamp=time.time(),
+        )
+
+    def _capture_sweep(self, cfg: PanoramaConfig) -> Spectrum:
+        """
+        Пошаговая развёртка для диапазонов шире _USABLE_BW.
+        Каждый шаг — один захват _capture_single, шаги склеиваются.
+        """
+        sr = self._SAFE_SR
+        step = self._USABLE_BW   # шаг между центрами (без перекрытия краёв)
+
+        centers = []
+        c = cfg.start_freq_hz + sr / 2
+        while c - sr / 2 < cfg.stop_freq_hz:
+            centers.append(c)
+            c += step
+
+        all_freqs_list = []
+        all_db_list = []
+
+        for center in centers:
+            self.sdr.center_freq = int(center)
+            time.sleep(0.05)   # ждём стабилизации PLL
+
+            # Полезная полоса этого шага (отбрасываем ±10% краёв)
+            step_start = max(center - step / 2, cfg.start_freq_hz)
+            step_stop  = min(center + step / 2, cfg.stop_freq_hz)
+
+            chunk = self._capture_single(step_start, step_stop, cfg)
+            all_freqs_list.append(chunk.frequencies_hz)
+            all_db_list.append(chunk.amplitudes_db)
+
+        freqs_all = np.concatenate(all_freqs_list)
+        db_all    = np.concatenate(all_db_list)
+
+        order = np.argsort(freqs_all)
+        return Spectrum(
+            frequencies_hz=freqs_all[order],
+            amplitudes_db=db_all[order],
+            rbw_hz=sr / cfg.fft_size,
+            timestamp=time.time(),
         )

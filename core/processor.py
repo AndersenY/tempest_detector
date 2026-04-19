@@ -23,9 +23,43 @@ class PanoramaProcessor:
             return []
 
         if self.cfg.combine_triplets:
-            return self._group_triplets(above_indices, diff_db, on)
+            signals = self._group_triplets(above_indices, diff_db, on)
         else:
-            return [self._make_signal(idx, diff_db, on) for idx in above_indices]
+            signals = [self._make_signal(idx, diff_db, on) for idx in above_indices]
+
+        if self.cfg.min_separation_hz > 0:
+            signals = self._filter_by_separation(signals)
+
+        return signals
+
+    def _filter_by_separation(self, signals: List[PEMINSignal]) -> List[PEMINSignal]:
+        """
+        Из кандидатов, расположенных ближе min_separation_hz друг к другу,
+        оставляет только сигнал с максимальной амплитудой.
+        Обрабатывает список отсортированным по частоте.
+        """
+        if not signals:
+            return signals
+
+        sep = self.cfg.min_separation_hz
+        # Сортируем по частоте
+        sorted_sigs = sorted(signals, key=lambda s: s.frequency_hz)
+
+        kept: List[PEMINSignal] = []
+        i = 0
+        while i < len(sorted_sigs):
+            # Собираем группу сигналов в пределах sep от текущего
+            group = [sorted_sigs[i]]
+            j = i + 1
+            while j < len(sorted_sigs) and sorted_sigs[j].frequency_hz - sorted_sigs[i].frequency_hz < sep:
+                group.append(sorted_sigs[j])
+                j += 1
+            # Из группы берём сигнал с максимальным превышением
+            best = max(group, key=lambda s: s.amplitude_diff_db)
+            kept.append(best)
+            i = j
+
+        return kept
 
     def _group_triplets(self, indices: np.ndarray, diff_db: np.ndarray, on: Spectrum) -> List[PEMINSignal]:
         """
