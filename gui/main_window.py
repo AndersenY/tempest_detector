@@ -85,7 +85,7 @@ class MainWindow(QMainWindow):
             QProgressBar::chunk { background-color: #2196F3; width: 10px; margin: 0.5px; }
         """)
 
-        self.btn_stop = QPushButton("⛔ СТОП")
+        self.btn_stop = QPushButton("↺ СБРОС")
         self.btn_stop.setStyleSheet("""
             QPushButton { background-color: #D32F2F; color: white; font-weight: bold;
                           padding: 5px 15px; border-radius: 4px; }
@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
             QPushButton:disabled { background-color: #555; color: #888; }
         """)
         self.btn_stop.setEnabled(False)
-        self.btn_stop.clicked.connect(self._stop_process)
+        self.btn_stop.clicked.connect(self._reset_to_start)
 
         top_control_layout.addWidget(self.prog, 1)
         top_control_layout.addWidget(self.btn_stop)
@@ -317,13 +317,38 @@ class MainWindow(QMainWindow):
     # Управление процессом
     # ------------------------------------------------------------------
 
-    def _stop_process(self):
+    def _reset_to_start(self):
+        """Прерывает текущий процесс (если запущен) и возвращает программу в начальное состояние."""
         if self.thread and self.thread.isRunning():
             if self.wf:
                 self.wf.stop()
-            self.btn_stop.setEnabled(False)
-            self.lbl_instruction.setText("<b style='color: orange;'>Остановка...</b>")
-            self.btn_action.setEnabled(False)
+            self.thread.wait(2000)
+
+        self.current_step = "idle"
+        self.wf = None
+        self.thread = None
+
+        self.plot.clear()
+        self.table.setRowCount(0)
+        self.prog.setValue(0)
+
+        self.lbl_instruction.setText("Подключите SDR для начала работы.")
+        self.lbl_instruction.setStyleSheet(
+            "color: #e0e0e0; font-size: 13px; padding: 10px;"
+            "background-color: #2b2b2b; border: 1px solid #444; border-radius: 4px;"
+        )
+
+        self.btn_action.setText("ПОДКЛЮЧИТЬ И НАЧАТЬ")
+        self.btn_action.setStyleSheet("""
+            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
+                          padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
+            QPushButton:hover { background-color: #1976D2; }
+            QPushButton:disabled { background-color: #444; color: #888; }
+        """)
+        self.btn_action.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.btn_save.setEnabled(False)
+        self._set_settings_enabled(True)
 
     def _on_control_button_clicked(self):
         if self.current_step == "idle":
@@ -392,7 +417,7 @@ class MainWindow(QMainWindow):
         self.lbl_instruction.setText(html_text)
         self.btn_action.setText(btn_text)
         self.btn_action.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self.btn_stop.setEnabled(True)   # сброс доступен всегда во время процесса
 
         if "ЗАВЕРШЕНА" in title or "ЗАВЕРШЕНО" in title:
             self.btn_action.setStyleSheet("""
@@ -412,7 +437,7 @@ class MainWindow(QMainWindow):
             self._update_table_only()
 
     def _on_thread_finished(self):
-        self.btn_stop.setEnabled(False)
+        self.btn_stop.setEnabled(True)   # можно сбросить и начать заново
         self.current_step = "idle"
         self._set_settings_enabled(True)
         self.btn_action.setText("НОВЫЙ ПОИСК")
