@@ -2,7 +2,7 @@ import time
 import threading
 import numpy as np
 from typing import Callable, List
-from ...sdr_controller import SDRController
+from ...backends import BaseInstrument
 from ...config import PanoramaConfig
 from ...models import Spectrum, PEMINSignal
 from ..base import AbstractDetectionMethod
@@ -15,7 +15,7 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
     Фазы: фон → сигнал → В1 (стабильность ВКЛ) → В2 (чистота ВЫКЛ).
     """
 
-    def __init__(self, ctrl: SDRController, cfg: PanoramaConfig):
+    def __init__(self, ctrl: BaseInstrument, cfg: PanoramaConfig):
         self.ctrl = ctrl
         self.cfg = cfg
         self.proc = PanoramaProcessor(cfg)

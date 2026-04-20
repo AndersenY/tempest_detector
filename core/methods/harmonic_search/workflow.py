@@ -1,7 +1,7 @@
 import time
 import threading
 from typing import List
-from ...sdr_controller import SDRController
+from ...backends import BaseInstrument
 from ...config import PanoramaConfig
 from ...models import Spectrum, PEMINSignal
 from ..base import AbstractDetectionMethod
@@ -22,7 +22,7 @@ class HarmonicSearchWorkflow(AbstractDetectionMethod):
     самостоятельным критерием принадлежности к ПЭМИН.
     """
 
-    def __init__(self, ctrl: SDRController, cfg: PanoramaConfig):
+    def __init__(self, ctrl: BaseInstrument, cfg: PanoramaConfig):
         self.ctrl = ctrl
         self.cfg = cfg
         self.proc = HarmonicProcessor(cfg)

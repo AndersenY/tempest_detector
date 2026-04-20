@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.config import PanoramaConfig
-from core.sdr_controller import SDRController
+from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator
 from core.models import Spectrum, PEMINSignal
 from core.methods import PanoramaDiffWorkflow, HarmonicSearchWorkflow
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
@@ -61,7 +61,7 @@ class MainWindow(QMainWindow):
         """)
 
         self.cfg = PanoramaConfig()
-        self.ctrl = SDRController()
+        self.ctrl: BaseInstrument = RtlSdrBackend()
         self.wf = None
         self.thread = None
         self.current_step = "idle"
@@ -69,8 +69,9 @@ class MainWindow(QMainWindow):
         self._last_on = None
         self._last_off = None
         self._last_diff = None
+        self._current_action_title: str = ""
 
-        self.scan_mode = "full"   # "full" | "quick"
+        self.scan_mode = "full"   # "full" | "quick" | "harmonic" | "simulator" | "demo"
 
         self._init_ui()
         self._setup_menu_bar()
@@ -126,6 +127,12 @@ class MainWindow(QMainWindow):
 
         menu_mode.addSeparator()
 
+        self.act_mode_simulator = QAction("Симулятор  (без железа)", self)
+        self.act_mode_simulator.setCheckable(True)
+        self.act_mode_simulator.triggered.connect(lambda: self._set_scan_mode("simulator"))
+        mode_group.addAction(self.act_mode_simulator)
+        menu_mode.addAction(self.act_mode_simulator)
+
         self.act_mode_demo = QAction("Демо-режим  (загрузить архив)", self)
         self.act_mode_demo.setCheckable(True)
         self.act_mode_demo.triggered.connect(lambda: self._set_scan_mode("demo"))
@@ -166,6 +173,8 @@ class MainWindow(QMainWindow):
             self.btn_action.setText("БЫСТРОЕ СКАНИРОВАНИЕ")
         elif mode == "harmonic":
             self.btn_action.setText("ПОИСК ПО ГАРМОНИКАМ")
+        elif mode == "simulator":
+            self.btn_action.setText("ЗАПУСТИТЬ СИМУЛЯТОР")
         elif mode == "demo":
             self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
         # Колонка «Гармоники» — только для harmonic-режима
@@ -481,6 +490,13 @@ class MainWindow(QMainWindow):
             else:
                 self._connect_and_start()
         else:
+            # Перед возобновлением — переключаем тест-сигнал симулятора если нужно
+            if isinstance(self.ctrl, DemoSimulator):
+                title = self._current_action_title
+                if "ФОН ИЗМЕРЕН" in title:
+                    self.ctrl.test_active = True
+                elif "ВЕРИФИКАЦИЯ 1 ЗАВЕРШЕНА" in title:
+                    self.ctrl.test_active = False
             if self.wf:
                 self.wf.resume()
                 self.btn_action.setEnabled(False)
@@ -491,12 +507,24 @@ class MainWindow(QMainWindow):
         if not self._apply_settings_to_cfg():
             return
         self.cfg.skip_verification = (self.scan_mode == "quick")
+
+        if self.scan_mode == "simulator":
+            self._start_simulator()
+            return
+
         try:
+            self.ctrl = RtlSdrBackend()
             self.ctrl.connect()
             self.ctrl.configure(self.cfg)
             self._start_workflow()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка подключения", str(e))
+
+    def _start_simulator(self):
+        sim = DemoSimulator()
+        sim.configure(self.cfg)
+        self.ctrl = sim
+        self._start_workflow()
 
     def _make_workflow(self):
         if self.scan_mode == "harmonic":
@@ -727,6 +755,7 @@ class MainWindow(QMainWindow):
 
     def _on_action_needed(self, title, instruction, btn_text):
         self.current_step = "waiting"
+        self._current_action_title = title
 
         color = "#FF9800"
         if "ЗАВЕРШЕНА" in title or "ЗАВЕРШЕНО" in title:
