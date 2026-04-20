@@ -45,6 +45,17 @@ class RtlSdrBackend(BaseInstrument):
                 pass
             self._sdr = None
 
+    # RTL-SDR нестабилен при sample rate в диапазоне 300–900 кГц — segfault/PLL fail.
+    # При попадании в эту зону принудительно используем ближайшее безопасное значение.
+    _SR_DEAD_LOW  = 300_001
+    _SR_DEAD_HIGH = 900_000
+    _SR_SNAP      = 1_024_000   # ближайший надёжный rate выше мёртвой зоны
+
+    def _safe_sr(self, sr: int) -> int:
+        if self._SR_DEAD_LOW <= sr <= self._SR_DEAD_HIGH:
+            return self._SR_SNAP
+        return sr
+
     def configure(self, cfg: PanoramaConfig) -> None:
         if not self._sdr:
             raise RuntimeError("RTL-SDR не подключён.")
@@ -53,7 +64,7 @@ class RtlSdrBackend(BaseInstrument):
         span = cfg.stop_freq_hz - cfg.start_freq_hz
 
         if span <= self._USABLE_BW:
-            sr = int(np.clip(span * 1.15, 250_000, self._SAFE_SR))
+            sr = self._safe_sr(int(np.clip(span * 1.15, 250_000, self._SAFE_SR)))
             self._sdr.center_freq = int((cfg.start_freq_hz + cfg.stop_freq_hz) / 2)
         else:
             sr = self._SAFE_SR

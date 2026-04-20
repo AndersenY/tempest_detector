@@ -47,12 +47,17 @@ class DemoSimulator(BaseInstrument):
     def close(self) -> None:
         self.test_active = False
 
+    # Минимальный span для пересчёта F₁ — узкие reconfigure (Zero Span) его не меняют
+    _WIDE_SPAN_HZ = 2_000_000
+
     def configure(self, cfg: PanoramaConfig) -> None:
         self._cfg = cfg
         span = cfg.stop_freq_hz - cfg.start_freq_hz
-        # F₁ выбирается так, чтобы все запрошенные гармоники поместились в диапазон
-        n = max(cfg.harmonic_max_count, 3)
-        self._f1_hz = cfg.start_freq_hz + span / (n + 1)
+        if span >= self._WIDE_SPAN_HZ or self._f1_hz == 0.0:
+            # Полноценный диапазон — пересчитываем F₁
+            n = max(cfg.harmonic_max_count, 3)
+            self._f1_hz = cfg.start_freq_hz + span / (n + 1)
+        # Иначе: узкий Zero-Span reconfigure — сохраняем существующий F₁
 
     def capture_spectrum(self) -> Spectrum:
         if not self._cfg:

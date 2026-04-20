@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
                              QProgressBar, QMessageBox, QGroupBox, QHeaderView,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
-                             QCheckBox, QFormLayout)
+                             QCheckBox, QFormLayout, QStackedWidget)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.config import PanoramaConfig
@@ -16,8 +16,11 @@ from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator
 from core.models import Spectrum, PEMINSignal
 from core.methods import PanoramaDiffWorkflow, HarmonicSearchWorkflow
 from core.signal_processor import estimate_display_line
+from core.audio_monitor import AudioMonitor
+from core.zero_span import ZeroSpanWorker
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 from gui.expert_panel import ExpertPanel
+from gui.zero_span_widget import ZeroSpanWidget
 
 
 class Worker(QThread):
@@ -72,6 +75,8 @@ class MainWindow(QMainWindow):
         self._last_off = None
         self._last_diff = None
         self._current_action_title: str = ""
+        self._audio = AudioMonitor()
+        self._zs_worker: ZeroSpanWorker | None = None
 
         self.scan_mode = "full"   # "full" | "quick" | "harmonic" | "simulator" | "demo"
 
@@ -219,10 +224,14 @@ class MainWindow(QMainWindow):
         # Панель параметров измерения
         main_layout.addWidget(self._create_settings_panel())
 
-        # График спектра
+        # График спектра / Zero Span (переключаются через QStackedWidget)
         self.plot = SpectrumPlotWidget()
         self.plot.freq_clicked.connect(self._on_graph_click)
-        main_layout.addWidget(self.plot, 3)
+        self.zero_span_widget = ZeroSpanWidget()
+        self._spectrum_stack = QStackedWidget()
+        self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
+        self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
+        main_layout.addWidget(self._spectrum_stack, 3)
 
         # Нижняя секция: таблица + управление
         bottom_section = QHBoxLayout()
@@ -275,6 +284,8 @@ class MainWindow(QMainWindow):
 
         self.expert_panel = ExpertPanel()
         self.expert_panel.signal_modified.connect(self._on_expert_signal_modified)
+        self.expert_panel.zero_span_started.connect(self._on_zero_span_start)
+        self.expert_panel.zero_span_stopped.connect(self._on_zero_span_stop)
         control_layout.addWidget(self.expert_panel)
 
         control_layout.addStretch(1)
@@ -550,6 +561,9 @@ class MainWindow(QMainWindow):
         self.act_save.setEnabled(False)
         self.act_export_spectrum.setEnabled(False)
         self.prog.setValue(0)
+        self._stop_zero_span()
+        self._spectrum_stack.setCurrentIndex(0)
+        self.expert_panel.set_zero_span_active(False)
         self.expert_panel.set_instrument(self.ctrl)
         self.expert_panel.enable_remeasure(False)
 
@@ -601,6 +615,47 @@ class MainWindow(QMainWindow):
         else:
             self.plot.clear_highlight()
         self.expert_panel.set_signal(sig, idx)
+
+    def _on_zero_span_start(self, freq_hz: float) -> None:
+        """Запустить Zero Span мониторинг на выбранной частоте."""
+        self._stop_zero_span()   # на случай если уже запущен
+
+        sig = self._signal_by_freq(freq_hz)
+        baseline = sig.amplitude_on_db if sig else -80.0
+
+        self.zero_span_widget.clear()
+        self.zero_span_widget.set_signal_info(freq_hz, baseline)
+        self._spectrum_stack.setCurrentIndex(1)   # показать Zero Span
+
+        from copy import copy
+        self._zs_worker = ZeroSpanWorker(self.ctrl, copy(self.cfg), freq_hz)
+        self._zs_worker.amplitude_updated.connect(self.zero_span_widget.add_point)
+        self._zs_worker.amplitude_updated.connect(self._audio.set_amplitude)
+        self._zs_worker.start()
+        self._audio.start()
+        self.expert_panel.enable_remeasure(False)
+
+    def _on_zero_span_stop(self) -> None:
+        """Остановить Zero Span мониторинг и вернуть панораму спектра."""
+        self._stop_zero_span()
+        self._spectrum_stack.setCurrentIndex(0)   # вернуть спектр
+        self.expert_panel.set_zero_span_active(False)
+        if self.current_step == "idle":
+            self.expert_panel.enable_remeasure(True)
+
+    def _stop_zero_span(self) -> None:
+        """Внутренний хелпер — остановить worker и аудио без изменения UI."""
+        if self._zs_worker is not None:
+            self._zs_worker.stop()
+            self._zs_worker = None
+        self._audio.stop()
+
+    def _signal_by_freq(self, freq_hz: float):
+        """Найти PEMINSignal с частотой ближайшей к freq_hz."""
+        signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
+        if not signals:
+            return None
+        return min(signals, key=lambda s: abs(s.frequency_hz - freq_hz))
 
     def _on_expert_signal_modified(self, idx: int) -> None:
         """Сигнал изменён из ExpertPanel — обновить таблицу и маркеры."""
@@ -752,8 +807,8 @@ class MainWindow(QMainWindow):
 
         self.plot.add("ON — сессия A",   f_a, on_a.amplitudes_db,  "#FFC107", width=1)
         self.plot.add("ON — сессия B",   f_b, on_b.amplitudes_db,  "#00BCD4", width=1)
-        self.plot.add("Δ — сессия A",    f_a, diff_a,              "#FF5722", fill=(255, 87, 34, 60))
-        self.plot.add("Δ — сессия B",    f_b, diff_b,              "#AB47BC", fill=(171, 71, 188, 60))
+        self.plot.add("Δ — сессия A",    f_a, diff_a,              "#FF5722", width=2)
+        self.plot.add("Δ — сессия B",    f_b, diff_b,              "#AB47BC", width=2)
 
         x_min = min(float(f_a.min()), float(f_b.min()))
         x_max = max(float(f_a.max()), float(f_b.max()))
@@ -828,7 +883,10 @@ class MainWindow(QMainWindow):
         self.plot.clear()
         self.table.setRowCount(0)
         self.prog.setValue(0)
+        self._stop_zero_span()
+        self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.clear_signal()
+        self.expert_panel.set_zero_span_active(False)
         self.expert_panel.enable_remeasure(False)
 
         self.lbl_instruction.setText("Подключите SDR для начала работы.")
@@ -879,7 +937,7 @@ class MainWindow(QMainWindow):
         self.plot.set_freq_range(x_min, x_max)
         self.plot.add("ON (Test)", f_mhz, on.amplitudes_db, "y")
         self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, "b")
-        self.plot.add("Difference", f_mhz, diff, "r", fill=(255, 0, 0, 50))
+        self.plot.add("Difference", f_mhz, diff, "r", width=2)
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
 
         dl = estimate_display_line(off)

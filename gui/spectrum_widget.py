@@ -25,8 +25,9 @@ class SpectrumPlotWidget(QWidget):
         self.plot.setTitle("Панорама спектра", color="#ffffff")
 
         self.plot.setClipToView(True)
-        self.plot.setDownsampling(mode="peak")
+        self.plot.setDownsampling(auto=True, mode="peak")
         self.plot.setAutoVisible(y=True)
+        self.plot.setAntialiasing(True)
 
         self.legend = self.plot.addLegend(offset=(10, 10))
         if self.legend:
@@ -234,21 +235,15 @@ class SpectrumPlotWidget(QWidget):
             self.legend.setBrush(pg.mkBrush(50, 50, 50, 200))
 
     def add(self, name: str, freqs_mhz, amps_db, color_hex, fill=None, width=1):
-        step = 4
-        if len(freqs_mhz) > 2000:
-            f_plot = freqs_mhz[::step]
-            a_plot = amps_db[::step]
-        else:
-            f_plot = freqs_mhz
-            a_plot = amps_db
-
         pen = pg.mkPen(color=color_hex, width=width)
         if name in self.curves:
-            self.curves[name].setData(f_plot, a_plot)
+            self.curves[name].setData(freqs_mhz, amps_db)
         else:
-            brush = pg.mkBrush(fill) if fill else None
-            curve = self.plot.plot(f_plot, a_plot, pen=pen, name=name,
-                                   fillLevel=0, fillBrush=brush)
+            kw = {}
+            if fill is not None:
+                kw["fillLevel"] = 0
+                kw["fillBrush"] = pg.mkBrush(fill)
+            curve = self.plot.plot(freqs_mhz, amps_db, pen=pen, name=name, **kw)
             self.curves[name] = curve
 
     def set_threshold(self, val_db, freq_range_mhz=None):

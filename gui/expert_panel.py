@@ -8,7 +8,6 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.backends import BaseInstrument
 from core.models import PEMINSignal
 from core.signal_processor import find_peak_in_window
-from core.audio_monitor import AudioMonitor
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +62,9 @@ class ExpertPanel(QGroupBox):
     чтобы MainWindow мог перерисовать таблицу и маркеры.
     """
 
-    signal_modified = pyqtSignal(int)   # индекс сигнала в списке
+    signal_modified   = pyqtSignal(int)    # индекс изменённого сигнала
+    zero_span_started = pyqtSignal(float)  # freq_hz — запрос на старт Zero Span
+    zero_span_stopped = pyqtSignal()       # запрос на остановку Zero Span
 
     _BTN = """
         QPushButton {
@@ -96,7 +97,6 @@ class ExpertPanel(QGroupBox):
         self._signal_idx: int = -1
         self._ctrl: BaseInstrument | None = None
         self._worker: _RemeasureWorker | None = None
-        self._audio = AudioMonitor()
 
         self._init_ui()
         self._update_display()
@@ -112,8 +112,6 @@ class ExpertPanel(QGroupBox):
         self._signal     = sig
         self._signal_idx = idx
         self._update_display()
-        if self._audio.active:
-            self._audio.set_amplitude(sig.amplitude_on_db)
 
     def clear_signal(self) -> None:
         self._signal     = None
@@ -122,8 +120,22 @@ class ExpertPanel(QGroupBox):
 
     def enable_remeasure(self, enabled: bool) -> None:
         """Разрешить/запретить кнопки переизмерения (нельзя во время workflow)."""
+        has = self._signal is not None
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
-            btn.setEnabled(enabled and self._signal is not None)
+            btn.setEnabled(enabled and has)
+        # Zero Span управляется отдельно: когда он активен — кнопка всегда доступна
+        if not self._btn_zero_span.isChecked():
+            self._btn_zero_span.setEnabled(enabled and has)
+
+    def set_zero_span_active(self, active: bool) -> None:
+        """Синхронизировать состояние кнопки с внешним управлением (MainWindow)."""
+        self._btn_zero_span.setChecked(active)
+        if active:
+            self._btn_zero_span.setText("⏹  Стоп Zero Span")
+            self._btn_zero_span.setStyleSheet(self._BTN_ACTIVE)
+        else:
+            self._btn_zero_span.setText("▶  Zero Span + Аудио")
+            self._btn_zero_span.setStyleSheet(self._BTN)
 
     # ------------------------------------------------------------------
     # Построение UI
@@ -182,21 +194,16 @@ class ExpertPanel(QGroupBox):
         row2.addWidget(self._btn_manual)
         root.addLayout(row2)
 
-        # ── Аудиомонитор ─────────────────────────────────────────────
-        audio_row = QHBoxLayout()
-        self._btn_audio = QPushButton("♪ Аудио ВЫКЛ")
-        self._btn_audio.setCheckable(True)
-        self._btn_audio.setStyleSheet(self._BTN)
-        if not self._audio.available:
-            self._btn_audio.setEnabled(False)
-            self._btn_audio.setToolTip("Установите sounddevice: pip install sounddevice")
-        else:
-            self._btn_audio.clicked.connect(self._toggle_audio)
-        self._lbl_audio_db = QLabel("")
-        self._lbl_audio_db.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        audio_row.addWidget(self._btn_audio)
-        audio_row.addWidget(self._lbl_audio_db)
-        root.addLayout(audio_row)
+        # ── Zero Span + аудиомонитор ─────────────────────────────────
+        self._btn_zero_span = QPushButton("▶  Zero Span + Аудио")
+        self._btn_zero_span.setCheckable(True)
+        self._btn_zero_span.setStyleSheet(self._BTN)
+        self._btn_zero_span.setToolTip(
+            "Непрерывный мониторинг выбранной частоты.\n"
+            "График амплитуды vs время + аудиотон для поиска максимума ДН."
+        )
+        self._btn_zero_span.clicked.connect(self._toggle_zero_span)
+        root.addWidget(self._btn_zero_span)
 
     # ------------------------------------------------------------------
     # Обновление отображения
@@ -230,12 +237,10 @@ class ExpertPanel(QGroupBox):
             self._lbl_status.setText(
                 f"<span style='color:{color_str}'>{label_str}</span>"
             )
-            if self._audio.active:
-                self._audio.set_amplitude(sig.amplitude_on_db)
-                self._lbl_audio_db.setText(f"{sig.amplitude_on_db:.1f} дБ")
-
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
             btn.setEnabled(has and ctrl_ok)
+        if not self._btn_zero_span.isChecked():
+            self._btn_zero_span.setEnabled(has and ctrl_ok)
 
     # ------------------------------------------------------------------
     # Переизмерение
@@ -301,23 +306,16 @@ class ExpertPanel(QGroupBox):
             self.signal_modified.emit(self._signal_idx)
 
     # ------------------------------------------------------------------
-    # Аудиомонитор
+    # Zero Span toggle
     # ------------------------------------------------------------------
 
-    def _toggle_audio(self, checked: bool) -> None:
+    def _toggle_zero_span(self, checked: bool) -> None:
         if checked:
-            self._audio.start()
-            self._btn_audio.setText("♪ Аудио ВКЛ")
-            self._btn_audio.setStyleSheet(self._BTN_ACTIVE)
-            if self._signal:
-                self._audio.set_amplitude(self._signal.amplitude_on_db)
-                self._lbl_audio_db.setText(f"{self._signal.amplitude_on_db:.1f} дБ")
+            if self._signal is None:
+                self._btn_zero_span.setChecked(False)
+                return
+            self.set_zero_span_active(True)
+            self.zero_span_started.emit(self._signal.frequency_hz)
         else:
-            self._audio.stop()
-            self._btn_audio.setText("♪ Аудио ВЫКЛ")
-            self._btn_audio.setStyleSheet(self._BTN)
-            self._lbl_audio_db.setText("")
-
-    def closeEvent(self, event) -> None:
-        self._audio.stop()
-        super().closeEvent(event)
+            self.set_zero_span_active(False)
+            self.zero_span_stopped.emit()
