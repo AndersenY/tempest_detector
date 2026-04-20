@@ -100,6 +100,7 @@ class SpectrumPlotWidget(QWidget):
         self.signal_markers = []
         self.markers_visible = True
         self._highlight_line = None
+        self._display_line   = None
         self._freq_range_mhz = None
 
         self.plot.scene().sigMouseClicked.connect(self._on_scene_click)
@@ -198,11 +199,35 @@ class SpectrumPlotWidget(QWidget):
         if self._highlight_line is not None:
             self._highlight_line.setVisible(False)
 
+    def set_display_line(self, db: float, label: str = "") -> None:
+        """Горизонтальная Display Line (оранжевая пунктирная) по авто-расчёту шума."""
+        text = label or f"Display Line ({db:.1f} дБ)"
+        if self._display_line is None:
+            self._display_line = pg.InfiniteLine(
+                angle=0,
+                movable=False,
+                pen=pg.mkPen((255, 165, 0), width=1.5,
+                             style=Qt.PenStyle.DashDotLine),
+                label=text,
+                labelOpts={"color": (255, 165, 0), "position": 0.97,
+                           "fill": pg.mkBrush(40, 40, 40, 180)},
+            )
+            self._display_line.setZValue(50)
+            self.plot.addItem(self._display_line)
+        self._display_line.setValue(db)
+        self._display_line.label.setFormat(text)
+        self._display_line.setVisible(True)
+
+    def clear_display_line(self) -> None:
+        if self._display_line is not None:
+            self._display_line.setVisible(False)
+
     def clear(self):
         self.plot.clear()
         self.curves.clear()
         self.clear_markers()
         self._highlight_line = None
+        self._display_line   = None
         self.threshold_line = None
         self.legend = self.plot.addLegend(offset=(10, 10))
         if self.legend:

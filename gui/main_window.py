@@ -15,7 +15,9 @@ from core.config import PanoramaConfig
 from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator
 from core.models import Spectrum, PEMINSignal
 from core.methods import PanoramaDiffWorkflow, HarmonicSearchWorkflow
+from core.signal_processor import estimate_display_line
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
+from gui.expert_panel import ExpertPanel
 
 
 class Worker(QThread):
@@ -268,8 +270,12 @@ class MainWindow(QMainWindow):
         )
         self.lbl_instruction.setWordWrap(True)
         self.lbl_instruction.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.lbl_instruction.setMinimumHeight(100)
+        self.lbl_instruction.setMinimumHeight(80)
         control_layout.addWidget(self.lbl_instruction)
+
+        self.expert_panel = ExpertPanel()
+        self.expert_panel.signal_modified.connect(self._on_expert_signal_modified)
+        control_layout.addWidget(self.expert_panel)
 
         control_layout.addStretch(1)
 
@@ -513,6 +519,10 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self.ctrl.close()   # освобождаем USB до создания нового объекта
+        except Exception:
+            pass
+        try:
             self.ctrl = RtlSdrBackend()
             self.ctrl.connect()
             self.ctrl.configure(self.cfg)
@@ -540,6 +550,8 @@ class MainWindow(QMainWindow):
         self.act_save.setEnabled(False)
         self.act_export_spectrum.setEnabled(False)
         self.prog.setValue(0)
+        self.expert_panel.set_instrument(self.ctrl)
+        self.expert_panel.enable_remeasure(False)
 
         self.table.setRowCount(0)
         self.plot.clear()
@@ -561,28 +573,44 @@ class MainWindow(QMainWindow):
     def _on_table_selection_changed(self):
         if not self.table.selectedItems():
             self.plot.clear_highlight()
+            self.expert_panel.clear_signal()
             return
         row = self.table.currentRow()
         freq_item = self.table.item(row, 0)
         if freq_item is None:
             self.plot.clear_highlight()
+            self.expert_panel.clear_signal()
             return
         signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
         if not signals:
             self.plot.clear_highlight()
+            self.expert_panel.clear_signal()
             return
         try:
             freq_hz = float(freq_item.text()) * 1e6
         except ValueError:
             self.plot.clear_highlight()
+            self.expert_panel.clear_signal()
             return
-        sig = min(signals, key=lambda s: abs(s.frequency_hz - freq_hz))
+        idx = min(range(len(signals)), key=lambda i: abs(signals[i].frequency_hz - freq_hz))
+        sig = signals[idx]
         if _marker_color(sig) is not None:
             freq_mhz = sig.frequency_hz / 1e6
             self.plot.set_highlight(freq_mhz)
             self.plot.pan_to(freq_mhz)
         else:
             self.plot.clear_highlight()
+        self.expert_panel.set_signal(sig, idx)
+
+    def _on_expert_signal_modified(self, idx: int) -> None:
+        """Сигнал изменён из ExpertPanel — обновить таблицу и маркеры."""
+        signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
+        if signals:
+            self._update_table_from_signals(signals)
+            self.plot.plot_signals(signals)
+            if 0 <= idx < len(signals):
+                sig = signals[idx]
+                self.plot.set_highlight(sig.frequency_hz / 1e6)
 
     def _on_graph_click(self, freq_mhz: float):
         """Выделяет в таблице ближайший к freq_mhz сигнал с маркером на графике."""
@@ -604,9 +632,11 @@ class MainWindow(QMainWindow):
         if abs(nearest_sig.frequency_hz / 1e6 - freq_mhz) > threshold_mhz:
             self.plot.clear_highlight()
             self.table.clearSelection()
+            self.expert_panel.clear_signal()
             return
 
         self.plot.set_highlight(nearest_sig.frequency_hz / 1e6)
+        self.expert_panel.set_signal(nearest_sig, nearest_i)
 
         # Выделяем строку в таблице по частоте
         target_hz = nearest_sig.frequency_hz
@@ -798,6 +828,8 @@ class MainWindow(QMainWindow):
         self.plot.clear()
         self.table.setRowCount(0)
         self.prog.setValue(0)
+        self.expert_panel.clear_signal()
+        self.expert_panel.enable_remeasure(False)
 
         self.lbl_instruction.setText("Подключите SDR для начала работы.")
         self.lbl_instruction.setStyleSheet(
@@ -822,7 +854,6 @@ class MainWindow(QMainWindow):
 
     def _on_thread_finished(self):
         if self._resetting:
-            # Сброс уже выполнен через _reset_to_start, просто игнорируем
             self._resetting = False
             return
 
@@ -835,6 +866,7 @@ class MainWindow(QMainWindow):
                           padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
             QPushButton:hover { background-color: #1976D2; }
         """)
+        self.expert_panel.enable_remeasure(True)
 
     def _plot_data(self, on, off, diff):
         self._last_on = on
@@ -849,6 +881,9 @@ class MainWindow(QMainWindow):
         self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, "b")
         self.plot.add("Difference", f_mhz, diff, "r", fill=(255, 0, 0, 50))
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
+
+        dl = estimate_display_line(off)
+        self.plot.set_display_line(dl, f"Display Line ({dl:.1f} дБ)")
 
         if self.wf and hasattr(self.wf, "signals"):
             self._update_table_from_signals(self.wf.signals)
