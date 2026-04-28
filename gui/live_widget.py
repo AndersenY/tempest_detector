@@ -15,7 +15,8 @@ class LiveWidget(QWidget):
     для последующего запуска панорамы.
     """
 
-    freq_marked = pyqtSignal(float)   # МГц, при добавлении метки кликом
+    freq_marked = pyqtSignal(float)    # МГц, при добавлении метки
+    freq_selected = pyqtSignal(float)  # МГц, при клике вне режима меток кликом
 
     _DB_MIN = -95.0
     _DB_MAX = -40.0
@@ -260,13 +261,14 @@ class LiveWidget(QWidget):
     def _on_plot_click(self, event) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        if not self.btn_mark.isChecked():
-            return
         vb = self._pw.getPlotItem().getViewBox()
         if not vb.sceneBoundingRect().contains(event.scenePos()):
             return
         freq_mhz = float(vb.mapSceneToView(event.scenePos()).x())
-        self._add_mark(freq_mhz)
+        if self.btn_mark.isChecked():
+            self._add_mark(freq_mhz)
+        else:
+            self.freq_selected.emit(freq_mhz)
 
     def _add_mark(self, freq_mhz: float) -> None:
         line = pg.InfiniteLine(

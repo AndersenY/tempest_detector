@@ -6,8 +6,9 @@ from typing import List
 
 
 class SpectrumPlotWidget(QWidget):
-    freq_clicked = pyqtSignal(float)       # МГц, при клике левой кнопкой на графике
-    live_overlay_toggled = pyqtSignal(bool)  # запрос на запуск/остановку live overlay
+    freq_clicked = pyqtSignal(float)          # МГц, клик в обычном режиме
+    live_overlay_toggled = pyqtSignal(bool)   # запрос live overlay
+    freq_mark_added = pyqtSignal(float)       # МГц, добавлена метка в режиме меток
 
     def __init__(self):
         super().__init__()
@@ -43,8 +44,14 @@ class SpectrumPlotWidget(QWidget):
                           padding: 4px 8px; border-radius: 3px; font-size: 11px; }
             QPushButton:hover { background-color: #777; }
         """
+        _btn_check_style = """
+            QPushButton { background-color: #555; color: #aaa; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:checked { background-color: #E65100; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """
 
-        # Верхняя правая панель: сброс + маркеры
+        # Верхняя правая панель: сброс + маркеры + метка + live
         self.control_panel = QWidget(self.plot)
         self.control_panel.setStyleSheet(
             "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
@@ -68,6 +75,17 @@ class SpectrumPlotWidget(QWidget):
         """)
         self.btn_markers.toggled.connect(self._on_marker_toggle)
 
+        self.btn_mark_mode = QPushButton("📌 Метка")
+        self.btn_mark_mode.setCheckable(True)
+        self.btn_mark_mode.setToolTip("Режим меток: кликните на спектр для отметки частоты")
+        self.btn_mark_mode.setStyleSheet(_btn_check_style)
+        self.btn_mark_mode.toggled.connect(self._on_mark_mode_toggle)
+
+        self.btn_clear_marks = QPushButton("✕ Метки")
+        self.btn_clear_marks.setToolTip("Удалить все метки")
+        self.btn_clear_marks.setStyleSheet(_btn_style)
+        self.btn_clear_marks.clicked.connect(self.clear_panorama_marks)
+
         self.btn_live_overlay = QPushButton("📡 Live")
         self.btn_live_overlay.setCheckable(True)
         self.btn_live_overlay.setEnabled(False)
@@ -83,6 +101,8 @@ class SpectrumPlotWidget(QWidget):
 
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
+        panel_layout.addWidget(self.btn_mark_mode)
+        panel_layout.addWidget(self.btn_clear_marks)
         panel_layout.addWidget(self.btn_live_overlay)
 
         # Нижняя правая панель: зум + и -
@@ -116,8 +136,9 @@ class SpectrumPlotWidget(QWidget):
         self.signal_markers = []
         self.markers_visible = True
         self._highlight_line = None
-        self._display_line   = None
         self._freq_range_mhz = None
+        self._mark_mode = False
+        self._panorama_marks: list = []   # пользовательские метки частот
 
         self.plot.scene().sigMouseClicked.connect(self._on_scene_click)
 
@@ -151,6 +172,9 @@ class SpectrumPlotWidget(QWidget):
             marker.setVisible(checked)
         self.btn_markers.setText("🙈 Скрыть" if checked else "👁 ПЭМИН")
 
+    def _on_mark_mode_toggle(self, checked: bool) -> None:
+        self._mark_mode = checked
+
     def _on_scene_click(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
@@ -158,7 +182,38 @@ class SpectrumPlotWidget(QWidget):
         if not vb.sceneBoundingRect().contains(event.scenePos()):
             return
         point = vb.mapSceneToView(event.scenePos())
-        self.freq_clicked.emit(point.x())
+        freq_mhz = point.x()
+
+        if self._mark_mode:
+            self._add_panorama_mark(freq_mhz)
+        else:
+            self.freq_clicked.emit(freq_mhz)
+
+    # ------------------------------------------------------------------
+    # Метки пользователя (режим меток в панораме)
+    # ------------------------------------------------------------------
+
+    def _add_panorama_mark(self, freq_mhz: float) -> None:
+        line = pg.InfiniteLine(
+            angle=90,
+            movable=False,
+            pen=pg.mkPen("#FF9800", width=1.5, style=Qt.PenStyle.DashLine),
+            label=f"{freq_mhz:.3f} МГц",
+            labelOpts={
+                "color": "#FF9800",
+                "position": 0.92,
+                "fill": pg.mkBrush(20, 10, 0, 190),
+            },
+        )
+        line.setPos(freq_mhz)
+        self.plot.addItem(line)
+        self._panorama_marks.append(line)
+        self.freq_mark_added.emit(freq_mhz)
+
+    def clear_panorama_marks(self) -> None:
+        for line in self._panorama_marks:
+            self.plot.removeItem(line)
+        self._panorama_marks.clear()
 
     # ------------------------------------------------------------------
     # Публичное API
@@ -215,39 +270,21 @@ class SpectrumPlotWidget(QWidget):
         if self._highlight_line is not None:
             self._highlight_line.setVisible(False)
 
-    def set_display_line(self, db: float, label: str = "") -> None:
-        """Горизонтальная Display Line (оранжевая пунктирная) по авто-расчёту шума."""
-        text = label or f"Display Line ({db:.1f} дБ)"
-        if self._display_line is None:
-            self._display_line = pg.InfiniteLine(
-                angle=0,
-                movable=False,
-                pen=pg.mkPen((255, 165, 0), width=1.5,
-                             style=Qt.PenStyle.DashDotLine),
-                label=text,
-                labelOpts={"color": (255, 165, 0), "position": 0.97,
-                           "fill": pg.mkBrush(40, 40, 40, 180)},
-            )
-            self._display_line.setZValue(50)
-            self.plot.addItem(self._display_line)
-        self._display_line.setValue(db)
-        self._display_line.label.setFormat(text)
-        self._display_line.setVisible(True)
-
-    def clear_display_line(self) -> None:
-        if self._display_line is not None:
-            self._display_line.setVisible(False)
-
     def clear(self):
         self.plot.clear()
         self.curves.clear()
         self.clear_markers()
+        self._panorama_marks.clear()  # ссылки уже удалены plot.clear()
         self._highlight_line = None
-        self._display_line   = None
         self.threshold_line = None
         self.legend = self.plot.addLegend(offset=(10, 10))
         if self.legend:
             self.legend.setBrush(pg.mkBrush(50, 50, 50, 200))
+        # Сброс режима меток
+        self.btn_mark_mode.blockSignals(True)
+        self.btn_mark_mode.setChecked(False)
+        self.btn_mark_mode.blockSignals(False)
+        self._mark_mode = False
 
     # ------------------------------------------------------------------
     # Live overlay (динамический режим поверх снимка панорамы)

@@ -35,6 +35,7 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
         self.on_data = lambda a, b, c: None
         self.on_user_action_needed = lambda title, desc, btn: None
         self.on_signal_updated = lambda: None
+        self.on_off_spectrum = lambda spec: None   # вызывается сразу после захвата фона
 
     @property
     def signals(self) -> List[PEMINSignal]:
@@ -65,6 +66,7 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
 
             off_spec = self.ctrl.capture_spectrum()
             self._off_spectrum = off_spec
+            self.on_off_spectrum(off_spec)   # сразу показываем фон на графике
             self.on_progress(25)
 
             self.on_user_action_needed(
