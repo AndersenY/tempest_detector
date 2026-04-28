@@ -280,7 +280,9 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setColumnHidden(4, True)   # «Гармоники» — скрыта до активации метода
         self.table.setAlternatingRowColors(True)
+        self.table.setMouseTracking(True)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
+        self.table.itemEntered.connect(self._on_table_item_hover)
         self.table.setStyleSheet("""
             QTableWidget {
                 background-color: #252525; alternate-background-color: #2d2d2d;
@@ -867,6 +869,54 @@ class MainWindow(QMainWindow):
             self.plot.clear_highlight()
         self.expert_panel.set_signal(sig, idx)
 
+    def _on_table_item_hover(self, item):
+        """Подсветка частоты на графике при наведении на строку в таблице."""
+        row = item.row()
+        freq_item = self.table.item(row, 0)
+        if freq_item is None:
+            self.plot.clear_highlight()
+            return
+        try:
+            freq_mhz = float(freq_item.text())
+        except ValueError:
+            self.plot.clear_highlight()
+            return
+        
+        # В режиме live — просто панируем к частоте
+        if self.current_step == "live":
+            try:
+                vb = self.live_widget._pw.getPlotItem().getViewBox()
+                x_range = vb.viewRange()[0]
+                half_span = (x_range[1] - x_range[0]) / 2
+                vb.setXRange(freq_mhz - half_span, freq_mhz + half_span, padding=0)
+            except (ValueError, AttributeError):
+                pass
+            return
+        
+        # В режиме панорамы — подсвечиваем частоту
+        signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
+        if not signals:
+            # Для bookmark-сигналов до начала измерения
+            for bm_freq in self._bookmark_freqs_hz:
+                if abs(bm_freq / 1e6 - freq_mhz) < 0.01:
+                    self.plot.set_highlight(freq_mhz)
+                    self.plot.pan_to(freq_mhz)
+                    return
+            self.plot.clear_highlight()
+            return
+        
+        freq_hz = freq_mhz * 1e6
+        idx = min(range(len(signals)), key=lambda i: abs(signals[i].frequency_hz - freq_hz))
+        sig = signals[idx]
+        if abs(signals[idx].frequency_hz - freq_hz) < 1e6:
+            if _marker_color(sig) is not None:
+                self.plot.set_highlight(freq_mhz)
+                self.plot.pan_to(freq_mhz)
+            else:
+                self.plot.clear_highlight()
+        else:
+            self.plot.clear_highlight()
+
     def _on_live_graph_freq_clicked(self, freq_mhz: float) -> None:
         """При клике на live-графике (вне режима меток) — выделяем строку в таблице."""
         if not self._bookmark_freqs_hz:
@@ -1376,8 +1426,10 @@ class MainWindow(QMainWindow):
                 item_off    = QTableWidgetItem("—")
                 item_status = QTableWidgetItem("📌 Потенциальный")
                 item_status.setForeground(QColor(COLOR_WARN))
+                # Оранжевый фон для bookmark-сигналов
                 for col, item in enumerate([item_freq, item_diff, item_on,
                                             item_off, item_harm, item_status]):
+                    item.setBackground(QColor("#FF9800"))
                     self.table.setItem(i, col, item)
                 continue
 

@@ -1,7 +1,1 @@
-CLAUDE.md
-__pycache__/
-*.pyc
-*.pyo
-*.csv
-*.npz
-.vscode/
+Nothing should be ignored based on the provided file changes, as only a Python source file (`gui/main_window.py`) was modified without any build artifacts, dependencies, or temporary files present in the change list.
