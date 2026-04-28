@@ -21,6 +21,8 @@ from core.zero_span import ZeroSpanWorker
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 from gui.expert_panel import ExpertPanel
 from gui.zero_span_widget import ZeroSpanWidget
+from gui.live_widget import LiveWidget
+from core.live_worker import LiveWorker
 
 
 class Worker(QThread):
@@ -77,8 +79,9 @@ class MainWindow(QMainWindow):
         self._current_action_title: str = ""
         self._audio = AudioMonitor()
         self._zs_worker: ZeroSpanWorker | None = None
+        self._live_worker: LiveWorker | None = None
 
-        self.scan_mode = "full"   # "full" | "quick" | "harmonic" | "simulator" | "demo"
+        self.scan_mode = "full"   # "full"|"quick"|"harmonic"|"simulator"|"demo"|"live"|"live_sim"
 
         self._init_ui()
         self._setup_menu_bar()
@@ -134,6 +137,20 @@ class MainWindow(QMainWindow):
 
         menu_mode.addSeparator()
 
+        self.act_mode_live = QAction("📡  Прямой эфир  (SDR)", self)
+        self.act_mode_live.setCheckable(True)
+        self.act_mode_live.triggered.connect(lambda: self._set_scan_mode("live"))
+        mode_group.addAction(self.act_mode_live)
+        menu_mode.addAction(self.act_mode_live)
+
+        self.act_mode_live_sim = QAction("📡  Прямой эфир  (симулятор)", self)
+        self.act_mode_live_sim.setCheckable(True)
+        self.act_mode_live_sim.triggered.connect(lambda: self._set_scan_mode("live_sim"))
+        mode_group.addAction(self.act_mode_live_sim)
+        menu_mode.addAction(self.act_mode_live_sim)
+
+        menu_mode.addSeparator()
+
         self.act_mode_simulator = QAction("Симулятор  (без железа)", self)
         self.act_mode_simulator.setCheckable(True)
         self.act_mode_simulator.triggered.connect(lambda: self._set_scan_mode("simulator"))
@@ -184,6 +201,8 @@ class MainWindow(QMainWindow):
             self.btn_action.setText("ЗАПУСТИТЬ СИМУЛЯТОР")
         elif mode == "demo":
             self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
+        elif mode in ("live", "live_sim"):
+            self.btn_action.setText("ЗАПУСТИТЬ ПРЯМОЙ ЭФИР")
         # Колонка «Гармоники» — только для harmonic-режима
         self.table.setColumnHidden(4, mode != "harmonic")
 
@@ -228,9 +247,11 @@ class MainWindow(QMainWindow):
         self.plot = SpectrumPlotWidget()
         self.plot.freq_clicked.connect(self._on_graph_click)
         self.zero_span_widget = ZeroSpanWidget()
+        self.live_widget = LiveWidget()
         self._spectrum_stack = QStackedWidget()
         self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
         self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
+        self._spectrum_stack.addWidget(self.live_widget)     # index 2 — прямой эфир
         main_layout.addWidget(self._spectrum_stack, 3)
 
         # Нижняя секция: таблица + управление
@@ -494,6 +515,7 @@ class MainWindow(QMainWindow):
     def _reset_to_start(self):
         """Прерывает текущий процесс (если запущен) и возвращает программу в начальное состояние."""
         self._resetting = True
+        self._stop_live()
         if self.wf:
             self.wf.stop()
         # Не ждём завершения потока — он завершится сам через _on_thread_finished
@@ -504,8 +526,12 @@ class MainWindow(QMainWindow):
         if self.current_step == "idle":
             if self.scan_mode == "demo":
                 self._load_measurement()
+            elif self.scan_mode in ("live", "live_sim"):
+                self._start_live()
             else:
                 self._connect_and_start()
+        elif self.current_step == "live":
+            return  # в live-режиме нет фаз для перехода; остановка — через СБРОС
         else:
             # Перед возобновлением — переключаем тест-сигнал симулятора если нужно
             if isinstance(self.ctrl, DemoSimulator):
@@ -540,6 +566,74 @@ class MainWindow(QMainWindow):
             self._start_workflow()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка подключения", str(e))
+
+    def _start_live(self):
+        if not self._apply_settings_to_cfg():
+            return
+
+        use_sim = (self.scan_mode == "live_sim")
+        if use_sim:
+            ctrl = DemoSimulator()
+            ctrl.test_active = True
+        else:
+            try:
+                self.ctrl.close()
+            except Exception:
+                pass
+            try:
+                ctrl = RtlSdrBackend()
+                ctrl.connect()
+                self.ctrl = ctrl
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка подключения", str(e))
+                return
+
+        from copy import copy as _copy
+        live_cfg = _copy(self.cfg)
+        # Маленький FFT и одно усреднение — live-режим требует скорости, не разрешения.
+        # fft_size=2048 даёт ~586 Гц RBW при 2.4 МГц SR, что достаточно для наблюдения.
+        live_cfg.fft_size = 2048
+        live_cfg.averaging_count = 1
+        live_cfg.use_max_hold = False
+
+        if use_sim:
+            # Убираем симулированную задержку захвата для плавного live-обновления
+            ctrl._MEASURE_DELAY_S = 0.0
+
+        self.current_step = "live"
+        self._set_settings_enabled(False)
+        self.btn_action.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self._stop_zero_span()
+        self.live_widget.clear()
+        self._spectrum_stack.setCurrentIndex(2)
+        self.expert_panel.set_zero_span_active(False)
+        self.expert_panel.enable_remeasure(False)
+
+        src = "симулятор" if use_sim else "SDR"
+        self.lbl_instruction.setText(
+            f"<b>📡 Прямой эфир активен ({src})</b><br>"
+            f"<span style='color:#aaa'>"
+            f"{self.cfg.start_freq_hz / 1e6:.2f} – {self.cfg.stop_freq_hz / 1e6:.2f} МГц<br>"
+            f"Нажмите ↺ СБРОС для остановки</span>"
+        )
+
+        self._live_worker = LiveWorker(ctrl, live_cfg)
+        Q = Qt.ConnectionType.QueuedConnection
+        self._live_worker.spectrum_ready.connect(self._on_live_spectrum, Q)
+        self._live_worker.error.connect(
+            lambda e: QMessageBox.critical(self, "Ошибка Live", e), Q
+        )
+        self._live_worker.start()
+
+    def _stop_live(self) -> None:
+        if self._live_worker is not None:
+            self._live_worker.stop()
+            self._live_worker.wait(2000)
+            self._live_worker = None
+
+    def _on_live_spectrum(self, freqs_hz, amps_db) -> None:
+        self.live_widget.update_spectrum(freqs_hz, amps_db)
 
     def _start_simulator(self):
         sim = DemoSimulator()
@@ -884,6 +978,8 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self.prog.setValue(0)
         self._stop_zero_span()
+        self._stop_live()
+        self.live_widget.clear()
         self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.clear_signal()
         self.expert_panel.set_zero_span_active(False)
