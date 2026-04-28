@@ -6,7 +6,8 @@ from typing import List
 
 
 class SpectrumPlotWidget(QWidget):
-    freq_clicked = pyqtSignal(float)   # МГц, при клике левой кнопкой на графике
+    freq_clicked = pyqtSignal(float)       # МГц, при клике левой кнопкой на графике
+    live_overlay_toggled = pyqtSignal(bool)  # запрос на запуск/остановку live overlay
 
     def __init__(self):
         super().__init__()
@@ -67,8 +68,22 @@ class SpectrumPlotWidget(QWidget):
         """)
         self.btn_markers.toggled.connect(self._on_marker_toggle)
 
+        self.btn_live_overlay = QPushButton("📡 Live")
+        self.btn_live_overlay.setCheckable(True)
+        self.btn_live_overlay.setEnabled(False)
+        self.btn_live_overlay.setToolTip("Наложить живой спектр поверх снимка панорамы")
+        self.btn_live_overlay.setStyleSheet("""
+            QPushButton { background-color: #555; color: #aaa; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:checked { background-color: #00695C; color: white; }
+            QPushButton:hover   { background-color: #777; }
+            QPushButton:disabled { background-color: #333; color: #555; }
+        """)
+        self.btn_live_overlay.toggled.connect(self._on_live_overlay_toggle)
+
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
+        panel_layout.addWidget(self.btn_live_overlay)
 
         # Нижняя правая панель: зум + и -
         self.zoom_panel = QWidget(self.plot)
@@ -233,6 +248,40 @@ class SpectrumPlotWidget(QWidget):
         self.legend = self.plot.addLegend(offset=(10, 10))
         if self.legend:
             self.legend.setBrush(pg.mkBrush(50, 50, 50, 200))
+
+    # ------------------------------------------------------------------
+    # Live overlay (динамический режим поверх снимка панорамы)
+    # ------------------------------------------------------------------
+
+    def _on_live_overlay_toggle(self, checked: bool) -> None:
+        self.live_overlay_toggled.emit(checked)
+        if not checked:
+            self._remove_live_overlay()
+
+    def _remove_live_overlay(self) -> None:
+        if "live_overlay" in self.curves:
+            self.plot.removeItem(self.curves.pop("live_overlay"))
+
+    def update_live_overlay(self, freqs_mhz: np.ndarray, amps_db: np.ndarray) -> None:
+        """Обновить или создать кривую live overlay (голубой цвет)."""
+        if "live_overlay" in self.curves:
+            self.curves["live_overlay"].setData(freqs_mhz, amps_db)
+        else:
+            curve = self.plot.plot(
+                freqs_mhz, amps_db,
+                pen=pg.mkPen("#00E5FF", width=1),
+                name="Live",
+            )
+            self.curves["live_overlay"] = curve
+
+    def enable_live_overlay_btn(self, enabled: bool) -> None:
+        """Активировать кнопку live overlay (только после завершения измерения)."""
+        self.btn_live_overlay.setEnabled(enabled)
+        if not enabled:
+            self.btn_live_overlay.blockSignals(True)
+            self.btn_live_overlay.setChecked(False)
+            self.btn_live_overlay.blockSignals(False)
+            self._remove_live_overlay()
 
     def add(self, name: str, freqs_mhz, amps_db, color_hex, fill=None, width=1):
         pen = pg.mkPen(color=color_hex, width=width)

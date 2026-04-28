@@ -13,13 +13,19 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
     """
     Метод разности панорам (ON − OFF).
     Фазы: фон → сигнал → В1 (стабильность ВКЛ) → В2 (чистота ВЫКЛ).
+
+    preset_candidates_hz — список частот (Гц), помеченных пользователем в live-режиме.
+    Они добавляются в список кандидатов после автоматического detect() и проходят
+    ту же верификацию В1/В2 что и автоматически найденные сигналы.
     """
 
-    def __init__(self, ctrl: BaseInstrument, cfg: PanoramaConfig):
+    def __init__(self, ctrl: BaseInstrument, cfg: PanoramaConfig,
+                 preset_candidates_hz: List[float] | None = None):
         self.ctrl = ctrl
         self.cfg = cfg
         self.proc = PanoramaProcessor(cfg)
         self._signals: List[PEMINSignal] = []
+        self._preset_candidates_hz: List[float] = list(preset_candidates_hz or [])
 
         self._pause_event = threading.Event()
         self._stop_flag = False
@@ -80,6 +86,7 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
             self.on_data(on_spec, off_spec, diff)
 
             self._signals = self.proc.detect(diff, on_spec)
+            self._merge_bookmark_candidates(on_spec, off_spec)
             self.on_progress(70)
 
             count = len(self._signals)
@@ -185,3 +192,26 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
             self.on_status(f"ОШИБКА: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def _merge_bookmark_candidates(self, on_spec: Spectrum, off_spec: Spectrum) -> None:
+        """Добавляет помеченные частоты как кандидатов, если auto-detect их не нашёл."""
+        if not self._preset_candidates_hz:
+            return
+        rbw = on_spec.rbw_hz
+        tol = max(rbw * 3, 10_000)   # допуск: 3 RBW или минимум 10 кГц
+        for freq_hz in self._preset_candidates_hz:
+            if any(abs(s.frequency_hz - freq_hz) < tol for s in self._signals):
+                continue   # уже найден автоматически
+            idx = int(np.argmin(np.abs(on_spec.frequencies_hz - freq_hz)))
+            amp_on  = float(on_spec.amplitudes_db[idx])
+            amp_off = float(off_spec.amplitudes_db[idx])
+            sig = PEMINSignal(
+                frequency_hz=float(on_spec.frequencies_hz[idx]),
+                amplitude_diff_db=amp_on - amp_off,
+                amplitude_on_db=amp_on,
+                amplitude_off_db=amp_off,
+                rbw_hz=rbw,
+                detection_method="bookmark",
+                spectrum_index=idx,
+            )
+            self._signals.append(sig)

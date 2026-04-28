@@ -80,6 +80,9 @@ class MainWindow(QMainWindow):
         self._audio = AudioMonitor()
         self._zs_worker: ZeroSpanWorker | None = None
         self._live_worker: LiveWorker | None = None
+        self._overlay_worker: LiveWorker | None = None
+        self._panorama_preview_worker: LiveWorker | None = None
+        self._bookmark_freqs_hz: list[float] = []   # частоты (Гц), отмеченные в live
 
         self.scan_mode = "full"   # "full"|"quick"|"harmonic"|"simulator"|"demo"|"live"|"live_sim"
 
@@ -246,8 +249,10 @@ class MainWindow(QMainWindow):
         # График спектра / Zero Span (переключаются через QStackedWidget)
         self.plot = SpectrumPlotWidget()
         self.plot.freq_clicked.connect(self._on_graph_click)
+        self.plot.live_overlay_toggled.connect(self._on_panorama_live_toggled)
         self.zero_span_widget = ZeroSpanWidget()
         self.live_widget = LiveWidget()
+        self.live_widget.freq_marked.connect(self._on_live_freq_marked)
         self._spectrum_stack = QStackedWidget()
         self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
         self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
@@ -390,11 +395,19 @@ class MainWindow(QMainWindow):
         self.chk_maxhold.setChecked(self.cfg.use_max_hold)
         layout.addWidget(self.chk_maxhold)
 
+        # Режим одной полосы SDR (только для live)
+        self.chk_single_bw = QCheckBox("Полоса SDR (2 МГц)")
+        self.chk_single_bw.setToolTip(
+            "Live-режим: показывать только одну полосу пропускания SDR (~2 МГц)\n"
+            "вместо полного диапазона. Значительно ускоряет обновление."
+        )
+        layout.addWidget(self.chk_single_bw)
+
         layout.addStretch(1)
 
         self._settings_widgets = [
             self.spin_start_freq, self.spin_stop_freq, self.spin_threshold,
-            self.spin_gain, self.spin_avg, self.chk_maxhold,
+            self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_single_bw,
         ]
         return box
 
@@ -515,6 +528,7 @@ class MainWindow(QMainWindow):
     def _reset_to_start(self):
         """Прерывает текущий процесс (если запущен) и возвращает программу в начальное состояние."""
         self._resetting = True
+        self._stop_panorama_preview()
         self._stop_live()
         if self.wf:
             self.wf.stop()
@@ -530,6 +544,9 @@ class MainWindow(QMainWindow):
                 self._start_live()
             else:
                 self._connect_and_start()
+        elif self.current_step == "live_preview":
+            self._launch_measurement_from_preview()
+            return
         elif self.current_step == "live":
             return  # в live-режиме нет фаз для перехода; остановка — через СБРОС
         else:
@@ -556,14 +573,14 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.ctrl.close()   # освобождаем USB до создания нового объекта
+            self.ctrl.close()
         except Exception:
             pass
         try:
             self.ctrl = RtlSdrBackend()
             self.ctrl.connect()
             self.ctrl.configure(self.cfg)
-            self._start_workflow()
+            self._start_panorama_preview()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка подключения", str(e))
 
@@ -590,11 +607,17 @@ class MainWindow(QMainWindow):
 
         from copy import copy as _copy
         live_cfg = _copy(self.cfg)
-        # Маленький FFT и одно усреднение — live-режим требует скорости, не разрешения.
-        # fft_size=2048 даёт ~586 Гц RBW при 2.4 МГц SR, что достаточно для наблюдения.
         live_cfg.fft_size = 2048
         live_cfg.averaging_count = 1
         live_cfg.use_max_hold = False
+
+        # При включённом флажке «Полоса SDR» — показываем только одну полосу
+        # пропускания (~2 МГц) вокруг центра диапазона, без sweep-захвата.
+        if self.chk_single_bw.isChecked():
+            center = (live_cfg.start_freq_hz + live_cfg.stop_freq_hz) / 2
+            half_bw = 1_000_000   # ±1 МГц = 2 МГц суммарно
+            live_cfg.start_freq_hz = max(center - half_bw, 24e6)
+            live_cfg.stop_freq_hz  = min(center + half_bw, 1_750e6)
 
         if use_sim:
             # Убираем симулированную задержку захвата для плавного live-обновления
@@ -606,6 +629,8 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self._stop_zero_span()
         self.live_widget.clear()
+        self.live_widget.clear_marks()       # новый сеанс — чистый лист
+        self._bookmark_freqs_hz.clear()      # сбрасываем предыдущие метки
         self._spectrum_stack.setCurrentIndex(2)
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.enable_remeasure(False)
@@ -614,7 +639,7 @@ class MainWindow(QMainWindow):
         self.lbl_instruction.setText(
             f"<b>📡 Прямой эфир активен ({src})</b><br>"
             f"<span style='color:#aaa'>"
-            f"{self.cfg.start_freq_hz / 1e6:.2f} – {self.cfg.stop_freq_hz / 1e6:.2f} МГц<br>"
+            f"{live_cfg.start_freq_hz / 1e6:.2f} – {live_cfg.stop_freq_hz / 1e6:.2f} МГц<br>"
             f"Нажмите ↺ СБРОС для остановки</span>"
         )
 
@@ -638,13 +663,79 @@ class MainWindow(QMainWindow):
     def _start_simulator(self):
         sim = DemoSimulator()
         sim.configure(self.cfg)
+        sim._MEASURE_DELAY_S = 0.0   # без задержки для live preview
         self.ctrl = sim
+        self._start_panorama_preview()
+
+    def _start_panorama_preview(self) -> None:
+        """Запускает live-просмотр спектра поверх графика панорамы.
+        Пользователь нажимает «Запустить» второй раз для начала измерения."""
+        self.current_step = "live_preview"
+        self._set_settings_enabled(False)
+        self.btn_action.setText("▶  ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
+        self.btn_action.setEnabled(True)
+        self.btn_stop.setEnabled(True)
+        self._stop_zero_span()
+        self._spectrum_stack.setCurrentIndex(0)
+        self.expert_panel.set_zero_span_active(False)
+        self.expert_panel.enable_remeasure(False)
+        self.plot.clear()
+
+        from copy import copy as _cp
+        prev_cfg = _cp(self.cfg)
+        prev_cfg.fft_size = 2048
+        prev_cfg.averaging_count = 1
+        prev_cfg.use_max_hold = False
+
+        self._panorama_preview_worker = LiveWorker(self.ctrl, prev_cfg)
+        Q = Qt.ConnectionType.QueuedConnection
+        self._panorama_preview_worker.spectrum_ready.connect(
+            self._on_panorama_preview_spectrum, Q
+        )
+        self._panorama_preview_worker.error.connect(
+            lambda e: QMessageBox.critical(self, "Ошибка Preview", e), Q
+        )
+        self._panorama_preview_worker.start()
+
+        # Показываем помеченные частоты в таблице сразу
+        self._refresh_bookmark_table()
+
+        self.lbl_instruction.setText(
+            "<b>📡 Прямой эфир активен</b><br>"
+            "<span style='color:#aaa'>Наблюдайте спектр. При необходимости — "
+            "переключите режим источника сигнала.<br>"
+            "Нажмите <b>▶ ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b> когда готовы.</span>"
+        )
+
+    def _stop_panorama_preview(self) -> None:
+        if self._panorama_preview_worker is not None:
+            self._panorama_preview_worker.stop()
+            self._panorama_preview_worker.wait(2000)
+            self._panorama_preview_worker = None
+
+    def _on_panorama_preview_spectrum(self, freqs_hz, amps_db) -> None:
+        self.plot.add("Прямой эфир", freqs_hz / 1e6, amps_db, "#39FF14", width=1)
+
+    def _launch_measurement_from_preview(self) -> None:
+        """Переход от live preview к реальному измерению панорамы."""
+        self._stop_panorama_preview()
+        # Восстанавливаем полное разрешение (preview работал с fft_size=2048)
+        try:
+            self.ctrl.configure(self.cfg)
+        except Exception:
+            pass
+        # Для симулятора восстанавливаем нормальную задержку
+        if isinstance(self.ctrl, DemoSimulator):
+            self.ctrl._MEASURE_DELAY_S = 0.25
         self._start_workflow()
 
     def _make_workflow(self):
         if self.scan_mode == "harmonic":
             return HarmonicSearchWorkflow(self.ctrl, self.cfg)
-        return PanoramaDiffWorkflow(self.ctrl, self.cfg)
+        return PanoramaDiffWorkflow(
+            self.ctrl, self.cfg,
+            preset_candidates_hz=list(self._bookmark_freqs_hz),
+        )
 
     def _start_workflow(self):
         self.current_step = "running"
@@ -662,6 +753,8 @@ class MainWindow(QMainWindow):
         self.expert_panel.enable_remeasure(False)
 
         self.table.setRowCount(0)
+        self._stop_overlay()
+        self.plot.enable_live_overlay_btn(False)
         self.plot.clear()
 
         self.wf = self._make_workflow()
@@ -871,6 +964,7 @@ class MainWindow(QMainWindow):
 
         self.act_save.setEnabled(bool(signals))
         self.act_export_spectrum.setEnabled(True)
+        self.plot.enable_live_overlay_btn(True)
 
         from datetime import datetime as dt
         ts = dt.fromtimestamp(on.timestamp).strftime("%d.%m.%Y %H:%M:%S")
@@ -974,6 +1068,9 @@ class MainWindow(QMainWindow):
         self.thread = None
         self._resetting = False
 
+        self._stop_overlay()
+        self._stop_panorama_preview()
+        self.plot.enable_live_overlay_btn(False)
         self.plot.clear()
         self.table.setRowCount(0)
         self.prog.setValue(0)
@@ -990,7 +1087,7 @@ class MainWindow(QMainWindow):
             "color: #e0e0e0; font-size: 13px; padding: 10px;"
             "background-color: #2b2b2b; border: 1px solid #444; border-radius: 4px;"
         )
-        self.btn_action.setText("ПОДКЛЮЧИТЬ И НАЧАТЬ")
+        self._set_scan_mode(self.scan_mode)   # восстанавливает текст кнопки для текущего режима
         self.btn_action.setStyleSheet("""
             QPushButton { background-color: #2196F3; color: white; font-weight: bold;
                           padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
@@ -1006,6 +1103,68 @@ class MainWindow(QMainWindow):
         self._last_diff = None
         self._set_settings_enabled(True)
 
+    # ------------------------------------------------------------------
+    # Live overlay в панораме
+    # ------------------------------------------------------------------
+
+    def _on_panorama_live_toggled(self, checked: bool) -> None:
+        if checked:
+            if not self.ctrl or not self.ctrl.is_connected:
+                from PyQt6.QtWidgets import QMessageBox as _MB
+                _MB.warning(self, "Нет подключения",
+                            "SDR не подключён — live overlay недоступен.")
+                self.plot.btn_live_overlay.blockSignals(True)
+                self.plot.btn_live_overlay.setChecked(False)
+                self.plot.btn_live_overlay.blockSignals(False)
+                return
+            from copy import copy as _copy
+            ov_cfg = _copy(self.cfg)
+            ov_cfg.fft_size = 2048
+            ov_cfg.averaging_count = 1
+            ov_cfg.use_max_hold = False
+            self._overlay_worker = LiveWorker(self.ctrl, ov_cfg)
+            Q = Qt.ConnectionType.QueuedConnection
+            self._overlay_worker.spectrum_ready.connect(
+                lambda f, a: self.plot.update_live_overlay(f / 1e6, a), Q
+            )
+            self._overlay_worker.start()
+        else:
+            self._stop_overlay()
+
+    def _stop_overlay(self) -> None:
+        if self._overlay_worker is not None:
+            self._overlay_worker.stop()
+            self._overlay_worker.wait(2000)
+            self._overlay_worker = None
+
+    # ------------------------------------------------------------------
+    # Метки из live-режима
+    # ------------------------------------------------------------------
+
+    def _on_live_freq_marked(self, freq_mhz: float) -> None:
+        """Пользователь поставил метку на live-спектре."""
+        freq_hz = freq_mhz * 1e6
+        if not any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
+            self._bookmark_freqs_hz.append(freq_hz)
+        self._refresh_bookmark_table()
+
+    def _refresh_bookmark_table(self) -> None:
+        """Показывает помеченные частоты в таблице как потенциальные кандидаты."""
+        if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
+            return   # workflow управляет таблицей сам
+        bookmarks = [
+            PEMINSignal(
+                frequency_hz=f,
+                amplitude_diff_db=0.0,
+                amplitude_on_db=0.0,
+                amplitude_off_db=0.0,
+                rbw_hz=0.0,
+                detection_method="bookmark",
+            )
+            for f in self._bookmark_freqs_hz
+        ]
+        self._update_table_from_signals(bookmarks)
+
     def _on_thread_finished(self):
         if self._resetting:
             self._resetting = False
@@ -1015,6 +1174,7 @@ class MainWindow(QMainWindow):
         self.current_step = "idle"
         self._set_settings_enabled(True)
         self.btn_action.setText("НОВЫЙ ПОИСК")
+        self.plot.enable_live_overlay_btn(True)
         self.btn_action.setStyleSheet("""
             QPushButton { background-color: #2196F3; color: white; font-weight: bold;
                           padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
@@ -1087,7 +1247,21 @@ class MainWindow(QMainWindow):
 
         for i, s in enumerate(signals):
             item_freq = QTableWidgetItem(f"{s.frequency_hz / 1e6:.4f}")
-            item_freq.setData(Qt.ItemDataRole.UserRole, i)  # индекс для поиска по клику
+            item_freq.setData(Qt.ItemDataRole.UserRole, i)
+
+            # Bookmark-кандидат без реальных данных (до измерения)
+            if s.detection_method == "bookmark" and s.verified_1 is None and s.amplitude_on_db == 0.0:
+                item_harm   = QTableWidgetItem("—")
+                item_diff   = QTableWidgetItem("—")
+                item_on     = QTableWidgetItem("—")
+                item_off    = QTableWidgetItem("—")
+                item_status = QTableWidgetItem("📌 Потенциальный")
+                item_status.setForeground(QColor(COLOR_WARN))
+                for col, item in enumerate([item_freq, item_diff, item_on,
+                                            item_off, item_harm, item_status]):
+                    self.table.setItem(i, col, item)
+                continue
+
             item_diff = QTableWidgetItem(f"{s.amplitude_diff_db:.1f}")
             item_on   = QTableWidgetItem(f"{s.amplitude_on_db:.1f}")
             item_off  = QTableWidgetItem(f"{s.amplitude_off_db:.1f}")
@@ -1142,6 +1316,10 @@ class MainWindow(QMainWindow):
                     )
                     if s.status_color == "blue":
                         status_text = "〇 Внешний (В2)" if (v1 and not v2) else "〇 Двойной брак"
+
+            # Если сигнал был найден через bookmark (из live-режима) — добавляем значок
+            if s.detection_method == "bookmark":
+                status_text = "📌 " + status_text
 
             item_status = QTableWidgetItem(status_text)
             item_status.setForeground(QColor(color_hex))
