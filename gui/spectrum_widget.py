@@ -267,14 +267,20 @@ class SpectrumPlotWidget(QWidget):
             self.signal_markers.append(line)
 
     def set_highlight(self, freq_mhz: float):
-        """Подсвечивает выбранную частоту белой вертикальной линией."""
+        """Показывает пунктирный маркер с подписью частоты (напр. '97.000 МГц')."""
         self._last_highlight_mhz = freq_mhz
         if not self._highlight_enabled:
             return
         if self._highlight_line is None:
             self._highlight_line = pg.InfiniteLine(
                 angle=90, movable=False,
-                pen=pg.mkPen((255, 255, 255), width=2.5),
+                pen=pg.mkPen((255, 255, 255), width=1.5, style=Qt.PenStyle.DashLine),
+                label="{value:.3f} МГц",
+                labelOpts={
+                    "color": "#FFFFFF",
+                    "position": 0.95,
+                    "fill": pg.mkBrush(40, 40, 40, 210),
+                },
             )
             self._highlight_line.setZValue(100)
             self.plot.addItem(self._highlight_line)
@@ -282,7 +288,7 @@ class SpectrumPlotWidget(QWidget):
         self._highlight_line.setVisible(True)
 
     def clear_highlight(self):
-        """Убирает подсветку выбранной частоты."""
+        """Убирает маркер выбранной частоты."""
         self._last_highlight_mhz = None
         if self._highlight_line is not None:
             self._highlight_line.setVisible(False)

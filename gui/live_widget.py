@@ -286,7 +286,13 @@ class LiveWidget(QWidget):
         if self._highlight_line is None:
             self._highlight_line = pg.InfiniteLine(
                 angle=90, movable=False,
-                pen=pg.mkPen((255, 255, 255), width=2.5),
+                pen=pg.mkPen((255, 255, 255), width=1.5, style=Qt.PenStyle.DashLine),
+                label="{value:.3f} МГц",
+                labelOpts={
+                    "color": "#FFFFFF",
+                    "position": 0.95,
+                    "fill": pg.mkBrush(40, 40, 40, 210),
+                },
             )
             self._highlight_line.setZValue(100)
             self._pw.getPlotItem().addItem(self._highlight_line)

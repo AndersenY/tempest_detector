@@ -3,6 +3,7 @@ import csv
 import os
 import types
 import numpy as np
+import pyqtgraph as pg
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
@@ -593,16 +594,19 @@ class MainWindow(QMainWindow):
             cfg.start_freq_hz = max(center - 1_000_000, 24e6)
             cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
         self._panorama_preview_worker.update_config(cfg)
-        self.live_widget._x_initialized = False
+        # Немедленно обновляем X-диапазон и включаем Y-авторазмер
+        vb = self.live_widget._pw.getPlotItem().getViewBox()
+        vb.setXRange(cfg.start_freq_hz / 1e6, cfg.stop_freq_hz / 1e6, padding=0.01)
+        vb.enableAutoRange(axis=pg.ViewBox.YAxis)
+        self.live_widget._x_initialized = True  # уже выставили, не сбрасывать на следующем кадре
 
     def _sync_live_marks(self) -> None:
         """Синхронизирует метки на live_widget с _bookmark_freqs_hz."""
         self.live_widget.set_marks([f / 1e6 for f in self._bookmark_freqs_hz])
 
     def _on_table_context_menu(self, pos) -> None:
-        """Правый клик по строке таблицы — предложить удаление метки."""
-        # Удаление доступно только до начала измерения (в preview или idle)
-        if self.current_step not in ("live_preview", "idle") or self.wf is not None:
+        """Правый клик по строке — удалить метку (доступно в preview и idle)."""
+        if self.current_step not in ("live_preview", "idle"):
             return
         row = self.table.rowAt(pos.y())
         if row < 0:
@@ -614,8 +618,16 @@ class MainWindow(QMainWindow):
             freq_hz = float(freq_item.text()) * 1e6
         except ValueError:
             return
-        if not any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
+
+        # Проверяем, что строка — метка (до или после измерения)
+        is_bookmark = any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz)
+        if not is_bookmark and self.wf and hasattr(self.wf, "signals"):
+            signals = self.wf.signals
+            if 0 <= row < len(signals):
+                is_bookmark = (signals[row].detection_method == "bookmark")
+        if not is_bookmark:
             return
+
         from PyQt6.QtWidgets import QMenu
         menu = QMenu(self)
         act_del = menu.addAction("🗑  Удалить метку")
@@ -629,7 +641,15 @@ class MainWindow(QMainWindow):
         self.plot.remove_panorama_mark(freq_hz / 1e6)
         self.table.clearSelection()
         self.live_widget.highlight_mark(None)
-        self._refresh_bookmark_table()
+        self.plot.clear_highlight()
+        # Если измерение уже выполнено — убираем метку и из wf.signals
+        if self.wf and hasattr(self.wf, "signals"):
+            self.wf.signals = [s for s in self.wf.signals
+                               if not (s.detection_method == "bookmark" and
+                                       abs(s.frequency_hz - freq_hz) < 100e3)]
+            self._refresh_markers()
+        else:
+            self._refresh_bookmark_table()
 
     def _start_simulator(self):
         sim = DemoSimulator()
@@ -784,6 +804,8 @@ class MainWindow(QMainWindow):
         self.plot.set_freq_range(x_min, x_max)
         self.plot.add("OFF (фон)", f_mhz, off_spec.amplitudes_db, "b")
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
+        # Восстанавливаем метки после clear() — нужны на графике во время фазы 1
+        self.plot.set_panorama_marks([f / 1e6 for f in self._bookmark_freqs_hz])
         self.plot.reset_zoom()
 
     def _on_table_selection_changed(self):
@@ -814,6 +836,16 @@ class MainWindow(QMainWindow):
 
         signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
         if not signals:
+            # Нет сигналов — возможно идёт фаза 1 или показаны предварительные метки
+            try:
+                freq_mhz = float(freq_item.text())
+                freq_hz  = freq_mhz * 1e6
+                if any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
+                    self.plot.set_highlight(freq_mhz)
+                    self.plot.pan_to(freq_mhz)
+                    return
+            except ValueError:
+                pass
             self.plot.clear_highlight()
             self.expert_panel.clear_signal()
             return
