@@ -647,6 +647,10 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self._stop_zero_span()
 
+        # Очищаем метки предыдущего сеанса
+        self._bookmark_freqs_hz.clear()
+        self.plot.clear_panorama_marks()
+
         # Показываем live_widget
         self._spectrum_stack.setCurrentIndex(2)
         self.live_widget.clear()
@@ -844,9 +848,9 @@ class MainWindow(QMainWindow):
             if item:
                 try:
                     if abs(float(item.text()) - target_mhz) < 0.01:
-                        self.table.blockSignals(True)
+                        # Без блокировки сигналов — _on_table_selection_changed
+                        # подсветит метку и центрирует вид автоматически
                         self.table.selectRow(row)
-                        self.table.blockSignals(False)
                         self.table.scrollTo(self.table.model().index(row, 0))
                         break
                 except ValueError:
@@ -1112,7 +1116,9 @@ class MainWindow(QMainWindow):
         self._resetting = False
 
         self._stop_panorama_preview()   # также отключает хендлеры настроек
+        self._bookmark_freqs_hz.clear()
         self.plot.clear()
+        self.plot.clear_panorama_marks()
         self.table.setRowCount(0)
         self.prog.setValue(0)
         self._stop_zero_span()
@@ -1218,7 +1224,11 @@ class MainWindow(QMainWindow):
 
     def _update_table_only(self):
         if self.wf and hasattr(self.wf, "signals"):
-            self._update_table_from_signals(self.wf.signals)
+            if self.wf.signals:
+                self._update_table_from_signals(self.wf.signals)
+            else:
+                # Сигналов ещё нет — показываем метки пока идёт фаза 1
+                self._refresh_bookmark_table()
 
     # ------------------------------------------------------------------
     # Таблица результатов

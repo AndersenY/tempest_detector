@@ -20,15 +20,18 @@ class LiveWidget(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self._peak_hold:    np.ndarray | None = None
-        self._ema_spectrum: np.ndarray | None = None
-        self._show_peak  = True
-        self._mark_mode  = False
+        self._peak_hold:      np.ndarray | None = None
+        self._ema_spectrum:   np.ndarray | None = None
+        self._show_peak     = True
+        self._mark_mode     = False
         self._x_initialized = False
-        self._last_time  = time.time()
-        self._frame_count = 0
+        self._last_time     = time.time()
+        self._frame_count   = 0
         self._marked_lines: list = []
         self.marked_freqs_mhz: list[float] = []
+        self._highlight_line: pg.InfiniteLine | None = None
+        self._highlight_enabled = True
+        self._last_highlight_mhz: float | None = None
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -137,8 +140,20 @@ class LiveWidget(QWidget):
         self.lbl_fps = QLabel("—")
         self.lbl_fps.setStyleSheet("color: #666; font-size: 11px; min-width: 45px;")
 
+        self.btn_highlight = QPushButton("⊙ Маркер")
+        self.btn_highlight.setCheckable(True)
+        self.btn_highlight.setChecked(True)
+        self.btn_highlight.setToolTip("Показывать/скрывать выделение выбранной частоты")
+        self.btn_highlight.setStyleSheet("""
+            QPushButton { background-color: #555; color: #aaa; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:checked { background-color: #1565C0; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """)
+        self.btn_highlight.toggled.connect(self._on_highlight_toggle)
+
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
-                  self.btn_mark, self.btn_clear_marks, self.lbl_fps):
+                  self.btn_mark, self.btn_clear_marks, self.btn_highlight, self.lbl_fps):
             cp.addWidget(w)
 
         # ── Кнопки масштабирования (нижний правый угол) ───────────────
@@ -225,6 +240,8 @@ class LiveWidget(QWidget):
         self._peak_hold    = None
         self._ema_spectrum = None
         self._x_initialized = False
+        self._last_highlight_mhz = None
+        self._highlight_line = None   # виджет пересоздаётся при следующем вызове highlight_mark
         self._live_curve.setData([], [])
         self._peak_curve.setData([], [])
         self.lbl_fps.setText("—")
@@ -250,12 +267,40 @@ class LiveWidget(QWidget):
             self.marked_freqs_mhz.append(f)
 
     def highlight_mark(self, freq_mhz) -> None:
-        """Подсветить метку белым. Передать None для сброса подсветки."""
+        """Подсветить выбранную частоту белой линией. Передать None для сброса."""
+        self._last_highlight_mhz = freq_mhz
+
+        # Цвет метки-якоря (оранжевый/белый)
         for line, f in zip(self._marked_lines, self.marked_freqs_mhz):
             is_sel = freq_mhz is not None and abs(f - freq_mhz) < 0.001
             color  = "#FFFFFF" if is_sel else "#FF9800"
             width  = 2.5      if is_sel else 1.5
             line.setPen(pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine))
+
+        # Отдельная белая линия-индикатор (как в SpectrumWidget)
+        if not self._highlight_enabled or freq_mhz is None:
+            if self._highlight_line is not None:
+                self._highlight_line.setVisible(False)
+            return
+
+        if self._highlight_line is None:
+            self._highlight_line = pg.InfiniteLine(
+                angle=90, movable=False,
+                pen=pg.mkPen((255, 255, 255), width=2.5),
+            )
+            self._highlight_line.setZValue(100)
+            self._pw.getPlotItem().addItem(self._highlight_line)
+
+        self._highlight_line.setPos(freq_mhz)
+        self._highlight_line.setVisible(True)
+
+    def _on_highlight_toggle(self, checked: bool) -> None:
+        self._highlight_enabled = checked
+        if checked and self._last_highlight_mhz is not None:
+            self.highlight_mark(self._last_highlight_mhz)
+        elif not checked:
+            if self._highlight_line is not None:
+                self._highlight_line.setVisible(False)
 
     # ------------------------------------------------------------------
     # Приватные методы

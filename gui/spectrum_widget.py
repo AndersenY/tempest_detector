@@ -85,10 +85,23 @@ class SpectrumPlotWidget(QWidget):
         self.btn_clear_marks.setStyleSheet(_btn_style)
         self.btn_clear_marks.clicked.connect(self.clear_panorama_marks)
 
+        self.btn_highlight = QPushButton("⊙ Маркер")
+        self.btn_highlight.setCheckable(True)
+        self.btn_highlight.setChecked(True)
+        self.btn_highlight.setToolTip("Показывать/скрывать выделение выбранной частоты")
+        self.btn_highlight.setStyleSheet("""
+            QPushButton { background-color: #555; color: #aaa; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:checked { background-color: #1565C0; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """)
+        self.btn_highlight.toggled.connect(self._on_highlight_toggle)
+
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
         panel_layout.addWidget(self.btn_mark_mode)
         panel_layout.addWidget(self.btn_clear_marks)
+        panel_layout.addWidget(self.btn_highlight)
 
         # Нижняя правая панель: зум + и -
         self.zoom_panel = QWidget(self.plot)
@@ -121,9 +134,11 @@ class SpectrumPlotWidget(QWidget):
         self.signal_markers = []
         self.markers_visible = True
         self._highlight_line = None
+        self._highlight_enabled = True
+        self._last_highlight_mhz: float | None = None
         self._freq_range_mhz = None
         self._mark_mode = False
-        self._panorama_marks: list = []   # пользовательские метки частот
+        self._panorama_marks: list = []
 
         self.plot.scene().sigMouseClicked.connect(self._on_scene_click)
 
@@ -252,21 +267,31 @@ class SpectrumPlotWidget(QWidget):
             self.signal_markers.append(line)
 
     def set_highlight(self, freq_mhz: float):
-        """Подсвечивает выбранную частоту белой вертикальной линией поверх маркеров."""
+        """Подсвечивает выбранную частоту белой вертикальной линией."""
+        self._last_highlight_mhz = freq_mhz
+        if not self._highlight_enabled:
+            return
         if self._highlight_line is None:
             self._highlight_line = pg.InfiniteLine(
-                angle=90,
-                movable=False,
+                angle=90, movable=False,
                 pen=pg.mkPen((255, 255, 255), width=2.5),
             )
-            self._highlight_line.setZValue(100)   # поверх всех маркеров
+            self._highlight_line.setZValue(100)
             self.plot.addItem(self._highlight_line)
         self._highlight_line.setPos(freq_mhz)
         self._highlight_line.setVisible(True)
 
     def clear_highlight(self):
         """Убирает подсветку выбранной частоты."""
+        self._last_highlight_mhz = None
         if self._highlight_line is not None:
+            self._highlight_line.setVisible(False)
+
+    def _on_highlight_toggle(self, checked: bool) -> None:
+        self._highlight_enabled = checked
+        if checked and self._last_highlight_mhz is not None:
+            self.set_highlight(self._last_highlight_mhz)
+        elif not checked and self._highlight_line is not None:
             self._highlight_line.setVisible(False)
 
     def clear(self):
