@@ -392,20 +392,11 @@ class MainWindow(QMainWindow):
         self.chk_maxhold.setChecked(self.cfg.use_max_hold)
         layout.addWidget(self.chk_maxhold)
 
-        # Режим одной полосы SDR (только для live и preview)
-        self.chk_single_bw = QCheckBox("Полоса SDR (2 МГц)")
-        self.chk_single_bw.setChecked(True)
-        self.chk_single_bw.setToolTip(
-            "Показывать только одну полосу пропускания SDR (~2 МГц)\n"
-            "вместо полного диапазона. Значительно ускоряет обновление."
-        )
-        layout.addWidget(self.chk_single_bw)
-
         layout.addStretch(1)
 
         self._settings_widgets = [
             self.spin_start_freq, self.spin_stop_freq, self.spin_threshold,
-            self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_single_bw,
+            self.spin_gain, self.spin_avg, self.chk_maxhold,
         ]
         return box
 
@@ -612,10 +603,6 @@ class MainWindow(QMainWindow):
         cfg.fft_size        = 2048
         cfg.averaging_count = 1
         cfg.use_max_hold    = False
-        if self.chk_single_bw.isChecked():
-            center = (start_hz + stop_hz) / 2
-            cfg.start_freq_hz = max(center - 1_000_000, 24e6)
-            cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
         bw_mhz = (cfg.stop_freq_hz - cfg.start_freq_hz) / 1e6
         self.live_widget.set_follow_mode(bw_mhz)
         self._panorama_preview_worker.update_config(cfg)
@@ -643,8 +630,12 @@ class MainWindow(QMainWindow):
         # Перестраиваем SDR на новый центр
         from copy import copy as _copy
         cfg = _copy(self.cfg)
-        cfg.start_freq_hz   = start_mhz * 1e6
-        cfg.stop_freq_hz    = stop_mhz * 1e6
+        # Добавляем 5% запас, чтобы данные всегда перекрывали видимый диапазон
+        # (компенсирует квантование центральной частоты и ширины полосы RTL-SDR)
+        span_hz = (stop_mhz - start_mhz) * 1e6
+        margin_hz = span_hz * 0.05
+        cfg.start_freq_hz   = max(24e6,    start_mhz * 1e6 - margin_hz)
+        cfg.stop_freq_hz    = min(1750e6,  stop_mhz  * 1e6 + margin_hz)
         cfg.sdr_gain_db     = self.spin_gain.value()
         cfg.fft_size        = 2048
         cfg.averaging_count = 1
@@ -729,11 +720,6 @@ class MainWindow(QMainWindow):
         prev_cfg.fft_size = 2048
         prev_cfg.averaging_count = 1
         prev_cfg.use_max_hold = False
-        if self.chk_single_bw.isChecked():
-            center = (prev_cfg.start_freq_hz + prev_cfg.stop_freq_hz) / 2
-            prev_cfg.start_freq_hz = max(center - 1_000_000, 24e6)
-            prev_cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
-
         bw_mhz = (prev_cfg.stop_freq_hz - prev_cfg.start_freq_hz) / 1e6
         self.live_widget.set_follow_mode(bw_mhz)
 

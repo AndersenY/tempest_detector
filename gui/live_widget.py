@@ -35,11 +35,14 @@ class LiveWidget(QWidget):
         self._highlight_line: pg.InfiniteLine | None = None
         self._highlight_enabled = True
         self._last_highlight_mhz: float | None = None
-        # Follow-режим: фиксированная ширина полосы + ретюнинг при пане
+        # Follow-режим: ретюнинг при пане/зуме
         self._follow_span_mhz: float | None = None
         self._span_enforcing = False
         self._pending_range: tuple | None = None
         self._range_timer = QTimer()
+        self._last_data_min = 0.0   # частота первого бина последнего кадра (МГц)
+        self._last_data_max = 0.0
+        self._snap_in_progress = False  # блокировка ретюна при программном snap
         self._range_timer.setSingleShot(True)
         self._range_timer.timeout.connect(self._emit_pending_range)
         self._setup_ui()
@@ -75,6 +78,8 @@ class LiveWidget(QWidget):
         vb = pi.getViewBox()
         vb.setMouseMode(pg.ViewBox.PanMode)
         vb.sigXRangeChanged.connect(self._on_x_range_changed)
+        # Исключить fillLevel=-300 из расчёта авторазмера по Y
+        pi.setAutoVisible(y=True)
 
         self.legend = pi.addLegend(offset=(10, 10))
         if self.legend:
@@ -235,10 +240,22 @@ class LiveWidget(QWidget):
         if self._show_peak:
             self._peak_curve.setData(freqs_mhz, self._peak_hold)
 
-        if not self._x_initialized:
+        data_min = float(freqs_mhz.min())
+        data_max = float(freqs_mhz.max())
+
+        # Выравниваем вид под реальные данные:
+        #   — при первом кадре (нет паддинга → нет пустого левого края)
+        #   — после ретюнинга (диапазон данных сместился > 50 кГц)
+        range_shifted = (abs(data_min - self._last_data_min) > 0.05 or
+                         abs(data_max - self._last_data_max) > 0.05)
+        if not self._x_initialized or (self._follow_span_mhz is not None and range_shifted):
             vb = self._pw.getPlotItem().getViewBox()
-            vb.setXRange(float(freqs_mhz.min()), float(freqs_mhz.max()), padding=0.01)
+            self._snap_in_progress = True
+            vb.setXRange(data_min, data_max, padding=0)
+            self._snap_in_progress = False
             self._x_initialized = True
+        self._last_data_min = data_min
+        self._last_data_max = data_max
 
         self._frame_count += 1
         now = time.time()
@@ -275,6 +292,8 @@ class LiveWidget(QWidget):
         self._peak_hold    = None
         self._ema_spectrum = None
         self._x_initialized = False
+        self._last_data_min = 0.0
+        self._last_data_max = 0.0
         self._last_highlight_mhz = None
         self._highlight_line = None   # виджет пересоздаётся при следующем вызове highlight_mark
         self._live_curve.setData([], [])
@@ -399,11 +418,6 @@ class LiveWidget(QWidget):
     def _zoom_in(self) -> None:
         vb = self._pw.getPlotItem().getViewBox()
         x0, x1 = vb.viewRange()[0]
-        if self._follow_span_mhz is not None:
-            # В follow-режиме: шаг вправо на половину полосы
-            step = self._follow_span_mhz / 2
-            vb.setXRange(x0 + step, x1 + step, padding=0)
-            return
         cx = (x0 + x1) / 2
         half = (x1 - x0) / 2 * self._ZOOM_FACTOR
         vb.setXRange(cx - half, cx + half, padding=0)
@@ -411,11 +425,6 @@ class LiveWidget(QWidget):
     def _zoom_out(self) -> None:
         vb = self._pw.getPlotItem().getViewBox()
         x0, x1 = vb.viewRange()[0]
-        if self._follow_span_mhz is not None:
-            # В follow-режиме: шаг влево на половину полосы
-            step = self._follow_span_mhz / 2
-            vb.setXRange(x0 - step, x1 - step, padding=0)
-            return
         cx = (x0 + x1) / 2
         half = (x1 - x0) / 2 / self._ZOOM_FACTOR
         vb.setXRange(cx - half, cx + half, padding=0)
@@ -429,21 +438,12 @@ class LiveWidget(QWidget):
         self._follow_span_mhz = span_mhz
 
     def _on_x_range_changed(self, vb, range_) -> None:
-        if self._follow_span_mhz is None or self._span_enforcing:
+        # Не реагировать до первых данных и во время программного snap
+        if self._follow_span_mhz is None or not self._x_initialized or self._snap_in_progress:
             return
         x0, x1 = float(range_[0]), float(range_[1])
-        span = x1 - x0
-        cx = (x0 + x1) / 2
-        if abs(span - self._follow_span_mhz) > 0.01:
-            # Пользователь изменил зум — восстанавливаем фиксированную ширину
-            half = self._follow_span_mhz / 2
-            self._span_enforcing = True
-            vb.setXRange(cx - half, cx + half, padding=0)
-            self._span_enforcing = False
-            return
-        # Пан — планируем ретюнинг с дебаунсом 300 мс
-        self._pending_range = (cx - self._follow_span_mhz / 2,
-                               cx + self._follow_span_mhz / 2)
+        # Любое изменение вида (пан или зум) — планируем ретюнинг с дебаунсом 300 мс
+        self._pending_range = (x0, x1)
         self._range_timer.start(300)
 
     def _emit_pending_range(self) -> None:
