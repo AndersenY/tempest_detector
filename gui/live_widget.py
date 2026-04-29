@@ -15,6 +15,7 @@ class LiveWidget(QWidget):
     freq_selected = pyqtSignal(float)  # МГц, при клике вне режима меток
     marks_cleared = pyqtSignal()       # все метки удалены пользователем
 
+    _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
     _EMA_ALPHA   = 0.35    # коэффициент EMA-сглаживания живого спектра
     _ZOOM_FACTOR = 0.7
 
@@ -140,20 +141,20 @@ class LiveWidget(QWidget):
         self.lbl_fps = QLabel("—")
         self.lbl_fps.setStyleSheet("color: #666; font-size: 11px; min-width: 45px;")
 
-        self.btn_highlight = QPushButton("⊙ Маркер")
-        self.btn_highlight.setCheckable(True)
-        self.btn_highlight.setChecked(True)
-        self.btn_highlight.setToolTip("Показывать/скрывать выделение выбранной частоты")
-        self.btn_highlight.setStyleSheet("""
-            QPushButton { background-color: #555; color: #aaa; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:checked { background-color: #1565C0; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """)
-        self.btn_highlight.toggled.connect(self._on_highlight_toggle)
+        # self.btn_highlight = QPushButton("⊙ Маркер")
+        # self.btn_highlight.setCheckable(True)
+        # self.btn_highlight.setChecked(True)
+        # self.btn_highlight.setToolTip("Показывать/скрывать выделение выбранной частоты")
+        # self.btn_highlight.setStyleSheet("""
+        #     QPushButton { background-color: #555; color: #aaa; border: none;
+        #                   padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+        #     QPushButton:checked { background-color: #1565C0; color: white; }
+        #     QPushButton:hover { background-color: #777; }
+        # """)
+        # self.btn_highlight.toggled.connect(self._on_highlight_toggle)
 
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
-                  self.btn_mark, self.btn_clear_marks, self.btn_highlight, self.lbl_fps):
+                  self.btn_mark, self.btn_clear_marks, self.lbl_fps):
             cp.addWidget(w)
 
         # ── Кнопки масштабирования (нижний правый угол) ───────────────
@@ -229,12 +230,23 @@ class LiveWidget(QWidget):
         self._peak_curve.setData([], [])
 
     def reset_view(self) -> None:
-        """Сбросить масштаб: X по текущим данным, Y авто."""
+        """Сбросить масштаб: X по текущим данным, Y — центр в 0 дБ."""
         vb = self._pw.getPlotItem().getViewBox()
         data = self._live_curve.getData()
         if data[0] is not None and len(data[0]) > 0:
             vb.setXRange(float(data[0].min()), float(data[0].max()), padding=0.01)
-        vb.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+        all_y = []
+        for curve in (self._live_curve, self._peak_curve):
+            yd = curve.getData()[1]
+            if yd is not None and len(yd) > 0:
+                all_y.append(float(yd.min()))
+                all_y.append(float(yd.max()))
+        if all_y:
+            half_span = max(abs(min(all_y)), abs(max(all_y))) * 1.1
+            vb.setYRange(-half_span, half_span, padding=0)
+        else:
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     def clear(self) -> None:
         self._peak_hold    = None
@@ -350,6 +362,10 @@ class LiveWidget(QWidget):
             self.freq_selected.emit(freq_mhz)
 
     def _add_mark(self, freq_mhz: float) -> None:
+        if any(abs(f - freq_mhz) < self._MIN_MARK_SPACING_MHZ 
+            for f in self.marked_freqs_mhz):
+            return  # silently ignore
+
         line = self._make_mark_line(freq_mhz)
         line.setPos(freq_mhz)
         self._pw.getPlotItem().addItem(line)

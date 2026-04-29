@@ -940,6 +940,28 @@ class MainWindow(QMainWindow):
 
     def _on_graph_click(self, freq_mhz: float):
         if not self.wf or not hasattr(self.wf, "signals") or not self.wf.signals:
+            # Phase 1: сигналы ещё не обнаружены — ищем ближайшую закладку
+            if not self._bookmark_freqs_hz:
+                return
+            freq_hz = freq_mhz * 1e6
+            view_range = self.plot.plot.viewRange()[0]
+            visible_span = abs(view_range[1] - view_range[0]) or 20.0
+            threshold_mhz = visible_span / 20.0
+            nearest_hz = min(self._bookmark_freqs_hz, key=lambda f: abs(f - freq_hz))
+            if abs(nearest_hz / 1e6 - freq_mhz) > threshold_mhz:
+                return
+            target_mhz = nearest_hz / 1e6
+            self.plot.set_highlight(target_mhz)
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item:
+                    try:
+                        if abs(float(item.text()) - target_mhz) < 0.01:
+                            self.table.selectRow(row)
+                            self.table.scrollTo(self.table.model().index(row, 0))
+                            break
+                    except ValueError:
+                        pass
             return
 
         view_range = self.plot.plot.viewRange()[0]

@@ -6,6 +6,8 @@ from typing import List
 
 
 class SpectrumPlotWidget(QWidget):
+
+    _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
     freq_clicked    = pyqtSignal(float)   # МГц, клик в обычном режиме
     freq_mark_added = pyqtSignal(float)   # МГц, добавлена метка в режиме меток
 
@@ -60,12 +62,14 @@ class SpectrumPlotWidget(QWidget):
         panel_layout.setSpacing(5)
 
         self.btn_auto_scale = QPushButton("⟲ Сброс")
+        self.btn_auto_scale.setToolTip("Сбросить масштаб на графике")
         self.btn_auto_scale.setStyleSheet(_btn_style)
         self.btn_auto_scale.clicked.connect(self.reset_zoom)
 
         self.btn_markers = QPushButton("👁 ПЭМИН")
         self.btn_markers.setCheckable(True)
         self.btn_markers.setChecked(True)
+        self.btn_markers.setToolTip("Отобразить на графике частоты")
         self.btn_markers.setStyleSheet("""
             QPushButton { background-color: #555; color: #aaa; border: none;
                           padding: 4px 8px; border-radius: 3px; font-size: 11px; }
@@ -101,7 +105,7 @@ class SpectrumPlotWidget(QWidget):
         panel_layout.addWidget(self.btn_markers)
         panel_layout.addWidget(self.btn_mark_mode)
         panel_layout.addWidget(self.btn_clear_marks)
-        panel_layout.addWidget(self.btn_highlight)
+        # panel_layout.addWidget(self.btn_highlight)
 
         # Нижняя правая панель: зум + и -
         self.zoom_panel = QWidget(self.plot)
@@ -194,16 +198,21 @@ class SpectrumPlotWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _add_panorama_mark(self, freq_mhz: float) -> None:
+        
+        if any(abs(line.value() - freq_mhz) < self._MIN_MARK_SPACING_MHZ
+               for line in self._panorama_marks):
+            return  # silently ignore
+        
         line = pg.InfiniteLine(
             angle=90,
             movable=False,
             pen=pg.mkPen("#FF9800", width=1.5, style=Qt.PenStyle.DashLine),
-            label=f"{freq_mhz:.3f} МГц",
-            labelOpts={
-                "color": "#FF9800",
-                "position": 0.92,
-                "fill": pg.mkBrush(20, 10, 0, 190),
-            },
+            # label=f"{freq_mhz:.3f} МГц",
+            # labelOpts={
+            #     "color": "#FF9800",
+            #     "position": 0.92,
+            #     "fill": pg.mkBrush(20, 10, 0, 190),
+            # },
         )
         line.setPos(freq_mhz)
         self.plot.addItem(line)
@@ -218,7 +227,7 @@ class SpectrumPlotWidget(QWidget):
     def remove_panorama_mark(self, freq_mhz: float) -> None:
         """Удалить одну метку по частоте (допуск 10 кГц)."""
         for line in list(self._panorama_marks):
-            if abs(line.getPos() - freq_mhz) < 0.01:
+            if abs(line.value() - freq_mhz) < 0.01:
                 self.plot.removeItem(line)
                 self._panorama_marks.remove(line)
                 break
@@ -358,16 +367,24 @@ class SpectrumPlotWidget(QWidget):
         vb.setXRange(freq_mhz - half_span, freq_mhz + half_span, padding=0)
 
     def reset_zoom(self):
-        """Сбрасывает X к диапазону из настроек, Y — авто по видимым данным."""
+        """Сбрасывает X к диапазону из настроек, Y — центр в 0 дБ."""
         if not self.curves or self._freq_range_mhz is None:
             return
 
         x_min, x_max = self._freq_range_mhz
         vb = self.plot.getPlotItem().getViewBox()
         vb.setXRange(x_min, x_max, padding=0)
-        # Y-авто только по кривым спектра (без бесконечных InfiniteLine)
-        self.plot.getPlotItem().autoRange(items=list(self.curves.values()))
-        # После autoRange восстанавливаем X (autoRange мог его сдвинуть)
+
+        all_y = []
+        for curve in self.curves.values():
+            yd = curve.getData()[1]
+            if yd is not None and len(yd) > 0:
+                all_y.append(float(yd.min()))
+                all_y.append(float(yd.max()))
+        if all_y:
+            half_span = max(abs(min(all_y)), abs(max(all_y))) * 1.1
+            vb.setYRange(-half_span, half_span, padding=0)
+
         vb.setXRange(x_min, x_max, padding=0)
 
         if self.threshold_line is not None and self.threshold_line.yData is not None:
@@ -382,19 +399,18 @@ def _marker_color(sig):
     """
     Возвращает RGB-кортеж для маркера или None, если сигнал не нужно рисовать.
 
-    Ожидание (до В1):         жёлтый
-    В1 пройдена, В2 ещё нет:  жёлтый
-    В1 + В2 пройдены (ПЭМИН): зелёный
-    Всё остальное:             None — не рисуем
+    Закладки (bookmark) до завершения верификаций: оранжевый (#FF9800)
+    Обычные кандидаты до верификаций:              жёлтый
+    В1 + В2 пройдены (ПЭМИН):                      зелёный
+    В1 или В2 провалена:                            None — не рисуем
     """
+    is_bookmark = getattr(sig, 'detection_method', '') == 'bookmark'
     v1 = sig.verified_1
     v2 = sig.verified_2
 
-    if v1 is None:
-        return (255, 220, 50)   # ожидание до В1
-
-    if v1 and v2 is None:
-        return (255, 220, 50)   # В1 пройдена, В2 ещё не запускалась
+    if v1 is None or (v1 and v2 is None):
+        # Ожидание: закладки остаются оранжевыми, обычные — жёлтые
+        return (255, 152, 0) if is_bookmark else (255, 220, 50)
 
     if v1 and v2:
         return (50, 220, 80)    # ПЭМИН подтверждён
