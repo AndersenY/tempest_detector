@@ -109,7 +109,7 @@ class SpectrumPlotWidget(QWidget):
         self.btn_fullscreen.setStyleSheet("""
             QPushButton { background-color: #555; color: #ccc; border: none;
                           padding: 2px; border-radius: 3px; font-size: 14px; }
-            QPushButton:checked { background-color: #1A237E; color: white; }
+            QPushButton:checked { background-color: #2E7D32; color: white; }
             QPushButton:hover { background-color: #777; }
         """)
         self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)

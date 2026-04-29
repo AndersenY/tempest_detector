@@ -524,7 +524,6 @@ class MainWindow(QMainWindow):
 
     def _toggle_graph_fullscreen(self, fullscreen: bool) -> None:
         self._top_bar.setVisible(not fullscreen)
-        self._settings_panel.setVisible(not fullscreen)
         self._bottom_widget.setVisible(not fullscreen)
         # Синхронизируем кнопку в обоих виджетах без повторного эмита
         for w in (self.plot, self.live_widget):
