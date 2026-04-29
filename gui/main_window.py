@@ -80,12 +80,10 @@ class MainWindow(QMainWindow):
         self._current_action_title: str = ""
         self._audio = AudioMonitor()
         self._zs_worker: ZeroSpanWorker | None = None
-        self._live_worker: LiveWorker | None = None
-        self._overlay_worker: LiveWorker | None = None
         self._panorama_preview_worker: LiveWorker | None = None
         self._bookmark_freqs_hz: list[float] = []   # частоты (Гц), отмеченные в live
 
-        self.scan_mode = "full"   # "full"|"quick"|"harmonic"|"simulator"|"demo"|"live"|"live_sim"
+        self.scan_mode = "full"   # "full"|"quick"|"harmonic"|"simulator"|"demo"
 
         self._init_ui()
         self._setup_menu_bar()
@@ -141,20 +139,6 @@ class MainWindow(QMainWindow):
 
         menu_mode.addSeparator()
 
-        self.act_mode_live = QAction("📡  Прямой эфир  (SDR)", self)
-        self.act_mode_live.setCheckable(True)
-        self.act_mode_live.triggered.connect(lambda: self._set_scan_mode("live"))
-        mode_group.addAction(self.act_mode_live)
-        menu_mode.addAction(self.act_mode_live)
-
-        self.act_mode_live_sim = QAction("📡  Прямой эфир  (симулятор)", self)
-        self.act_mode_live_sim.setCheckable(True)
-        self.act_mode_live_sim.triggered.connect(lambda: self._set_scan_mode("live_sim"))
-        mode_group.addAction(self.act_mode_live_sim)
-        menu_mode.addAction(self.act_mode_live_sim)
-
-        menu_mode.addSeparator()
-
         self.act_mode_simulator = QAction("Симулятор  (без железа)", self)
         self.act_mode_simulator.setCheckable(True)
         self.act_mode_simulator.triggered.connect(lambda: self._set_scan_mode("simulator"))
@@ -205,8 +189,6 @@ class MainWindow(QMainWindow):
             self.btn_action.setText("ЗАПУСТИТЬ СИМУЛЯТОР")
         elif mode == "demo":
             self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
-        elif mode in ("live", "live_sim"):
-            self.btn_action.setText("ЗАПУСТИТЬ ПРЯМОЙ ЭФИР")
         # Колонка «Гармоники» — только для harmonic-режима
         self.table.setColumnHidden(4, mode != "harmonic")
 
@@ -250,12 +232,12 @@ class MainWindow(QMainWindow):
         # График спектра / Zero Span (переключаются через QStackedWidget)
         self.plot = SpectrumPlotWidget()
         self.plot.freq_clicked.connect(self._on_graph_click)
-        self.plot.live_overlay_toggled.connect(self._on_panorama_live_toggled)
         self.plot.freq_mark_added.connect(self._on_panorama_freq_marked)
         self.zero_span_widget = ZeroSpanWidget()
         self.live_widget = LiveWidget()
         self.live_widget.freq_marked.connect(self._on_live_freq_marked)
         self.live_widget.freq_selected.connect(self._on_live_graph_freq_clicked)
+        self.live_widget.marks_cleared.connect(self._on_live_marks_cleared)
         self._spectrum_stack = QStackedWidget()
         self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
         self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
@@ -281,6 +263,8 @@ class MainWindow(QMainWindow):
         self.table.setColumnHidden(4, True)   # «Гармоники» — скрыта до активации метода
         self.table.setAlternatingRowColors(True)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         self.table.setStyleSheet("""
             QTableWidget {
                 background-color: #252525; alternate-background-color: #2d2d2d;
@@ -534,7 +518,6 @@ class MainWindow(QMainWindow):
         self.btn_action.setEnabled(False)   # блокируем повторный запуск
 
         self._stop_panorama_preview()
-        self._stop_live()
         if self.wf:
             self.wf.stop()
 
@@ -549,15 +532,11 @@ class MainWindow(QMainWindow):
         if self.current_step == "idle":
             if self.scan_mode == "demo":
                 self._load_measurement()
-            elif self.scan_mode in ("live", "live_sim"):
-                self._start_live()
             else:
                 self._connect_and_start()
         elif self.current_step == "live_preview":
             self._launch_measurement_from_preview()
             return
-        elif self.current_step == "live":
-            return  # в live-режиме нет фаз для перехода; остановка — через СБРОС
         else:
             # Перед возобновлением — переключаем тест-сигнал симулятора если нужно
             if isinstance(self.ctrl, DemoSimulator):
@@ -593,109 +572,64 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка подключения", str(e))
 
-    def _start_live(self):
-        if not self._apply_settings_to_cfg():
-            return
-
-        use_sim = (self.scan_mode == "live_sim")
-        if use_sim:
-            ctrl = DemoSimulator()
-            ctrl.test_active = True
-        else:
-            try:
-                self.ctrl.close()
-            except Exception:
-                pass
-            try:
-                ctrl = RtlSdrBackend()
-                ctrl.connect()
-                self.ctrl = ctrl
-            except Exception as e:
-                QMessageBox.critical(self, "Ошибка подключения", str(e))
-                return
-
-        from copy import copy as _copy
-        live_cfg = _copy(self.cfg)
-        live_cfg.fft_size = 2048
-        live_cfg.averaging_count = 1
-        live_cfg.use_max_hold = False
-
-        if self.chk_single_bw.isChecked():
-            center = (live_cfg.start_freq_hz + live_cfg.stop_freq_hz) / 2
-            half_bw = 1_000_000
-            live_cfg.start_freq_hz = max(center - half_bw, 24e6)
-            live_cfg.stop_freq_hz  = min(center + half_bw, 1_750e6)
-
-        if use_sim:
-            ctrl._MEASURE_DELAY_S = 0.0
-
-        self.current_step = "live"
-        # Блокируем всё кроме частотного диапазона — его можно менять во время live
-        for w in self._settings_widgets:
-            if w not in (self.spin_start_freq, self.spin_stop_freq):
-                w.setEnabled(False)
-        self.btn_action.setEnabled(False)
-        self.btn_stop.setEnabled(True)
-        self._stop_zero_span()
-        self.live_widget.clear()
-        self.live_widget.clear_marks()
-        self._bookmark_freqs_hz.clear()
-        self._spectrum_stack.setCurrentIndex(2)
-        self.expert_panel.set_zero_span_active(False)
-        self.expert_panel.enable_remeasure(False)
-
-        src = "симулятор" if use_sim else "SDR"
-        self.lbl_instruction.setText(
-            f"<b>📡 Прямой эфир активен ({src})</b><br>"
-            f"<span style='color:#aaa'>"
-            f"{live_cfg.start_freq_hz / 1e6:.2f} – {live_cfg.stop_freq_hz / 1e6:.2f} МГц<br>"
-            f"Диапазон частот можно изменить в панели выше.<br>"
-            f"Нажмите ↺ СБРОС для остановки</span>"
-        )
-
-        # Подключаем обновление диапазона при изменении частот в live-режиме
-        self.spin_start_freq.valueChanged.connect(self._on_live_freq_range_changed)
-        self.spin_stop_freq.valueChanged.connect(self._on_live_freq_range_changed)
-
-        self._live_worker = LiveWorker(ctrl, live_cfg)
-        Q = Qt.ConnectionType.QueuedConnection
-        self._live_worker.spectrum_ready.connect(self._on_live_spectrum, Q)
-        self._live_worker.error.connect(
-            lambda e: QMessageBox.critical(self, "Ошибка Live", e), Q
-        )
-        self._live_worker.start()
-
-    def _on_live_freq_range_changed(self) -> None:
-        """Обновляет диапазон live-захвата при изменении спинбоксов в режиме прямого эфира."""
-        if self.current_step != "live" or self._live_worker is None:
+    def _on_preview_settings_changed(self) -> None:
+        """Обновляет live preview при изменении любого параметра во время предпросмотра."""
+        if self.current_step != "live_preview" or self._panorama_preview_worker is None:
             return
         start_hz = self.spin_start_freq.value() * 1e6
         stop_hz  = self.spin_stop_freq.value() * 1e6
         if stop_hz <= start_hz + 100e3:
             return
-
         from copy import copy as _copy
-        live_cfg = _copy(self.cfg)
-        live_cfg.start_freq_hz = start_hz
-        live_cfg.stop_freq_hz  = stop_hz
-        live_cfg.fft_size = 2048
-        live_cfg.averaging_count = 1
-        live_cfg.use_max_hold = False
+        cfg = _copy(self.cfg)
+        cfg.start_freq_hz   = start_hz
+        cfg.stop_freq_hz    = stop_hz
+        cfg.sdr_gain_db     = self.spin_gain.value()
+        cfg.fft_size        = 2048
+        cfg.averaging_count = 1
+        cfg.use_max_hold    = False
         if self.chk_single_bw.isChecked():
             center = (start_hz + stop_hz) / 2
-            live_cfg.start_freq_hz = max(center - 1_000_000, 24e6)
-            live_cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
-        self._live_worker.update_config(live_cfg)
-        self.live_widget._x_initialized = False   # сбросить диапазон оси X
+            cfg.start_freq_hz = max(center - 1_000_000, 24e6)
+            cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
+        self._panorama_preview_worker.update_config(cfg)
+        self.live_widget._x_initialized = False
 
-    def _stop_live(self) -> None:
-        if self._live_worker is not None:
-            self._live_worker.stop()
-            self._live_worker.wait(2000)
-            self._live_worker = None
+    def _sync_live_marks(self) -> None:
+        """Синхронизирует метки на live_widget с _bookmark_freqs_hz."""
+        self.live_widget.set_marks([f / 1e6 for f in self._bookmark_freqs_hz])
 
-    def _on_live_spectrum(self, freqs_hz, amps_db) -> None:
-        self.live_widget.update_spectrum(freqs_hz, amps_db)
+    def _on_table_context_menu(self, pos) -> None:
+        """Правый клик по строке таблицы — предложить удаление метки."""
+        # Удаление доступно только до начала измерения (в preview или idle)
+        if self.current_step not in ("live_preview", "idle") or self.wf is not None:
+            return
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        freq_item = self.table.item(row, 0)
+        if freq_item is None:
+            return
+        try:
+            freq_hz = float(freq_item.text()) * 1e6
+        except ValueError:
+            return
+        if not any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
+            return
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        act_del = menu.addAction("🗑  Удалить метку")
+        if menu.exec(self.table.viewport().mapToGlobal(pos)) == act_del:
+            self._delete_bookmark(freq_hz)
+
+    def _delete_bookmark(self, freq_hz: float) -> None:
+        self._bookmark_freqs_hz = [f for f in self._bookmark_freqs_hz
+                                   if abs(f - freq_hz) >= 100e3]
+        self._sync_live_marks()
+        self.plot.remove_panorama_mark(freq_hz / 1e6)
+        self.table.clearSelection()
+        self.live_widget.highlight_mark(None)
+        self._refresh_bookmark_table()
 
     def _start_simulator(self):
         sim = DemoSimulator()
@@ -705,30 +639,29 @@ class MainWindow(QMainWindow):
         self._start_panorama_preview()
 
     def _start_panorama_preview(self) -> None:
-        """Запускает live-просмотр спектра поверх графика панорамы."""
+        """Запускает live-просмотр на live_widget. Настройки остаются активными."""
         self.current_step = "live_preview"
-        self._set_settings_enabled(False)
+        # Настройки НЕ блокируются — пользователь может менять их в реальном времени
         self.btn_action.setText("▶  ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(True)
         self._stop_zero_span()
-        self._spectrum_stack.setCurrentIndex(0)
+
+        # Показываем live_widget
+        self._spectrum_stack.setCurrentIndex(2)
+        self.live_widget.clear()
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.enable_remeasure(False)
-        self.plot.clear()
 
         from copy import copy as _cp
         prev_cfg = _cp(self.cfg)
         prev_cfg.fft_size = 2048
         prev_cfg.averaging_count = 1
         prev_cfg.use_max_hold = False
-
-        # Применяем режим одной полосы, если включён
         if self.chk_single_bw.isChecked():
             center = (prev_cfg.start_freq_hz + prev_cfg.stop_freq_hz) / 2
-            half_bw = 1_000_000
-            prev_cfg.start_freq_hz = max(center - half_bw, 24e6)
-            prev_cfg.stop_freq_hz  = min(center + half_bw, 1_750e6)
+            prev_cfg.start_freq_hz = max(center - 1_000_000, 24e6)
+            prev_cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
 
         self._panorama_preview_worker = LiveWorker(self.ctrl, prev_cfg)
         Q = Qt.ConnectionType.QueuedConnection
@@ -740,27 +673,54 @@ class MainWindow(QMainWindow):
         )
         self._panorama_preview_worker.start()
 
+        # Подключаем все настройки — изменение → обновление live preview
+        for w in self._settings_widgets:
+            if isinstance(w, (QDoubleSpinBox, QSpinBox)):
+                w.valueChanged.connect(self._on_preview_settings_changed)
+            elif isinstance(w, QCheckBox):
+                w.toggled.connect(self._on_preview_settings_changed)
+
+        # Синхронизируем метки из предыдущих сессий
+        self._sync_live_marks()
         self._refresh_bookmark_table()
 
         self.lbl_instruction.setText(
             "<b>📡 Прямой эфир активен</b><br>"
-            "<span style='color:#aaa'>Наблюдайте спектр. При необходимости — "
-            "переключите режим источника сигнала.<br>"
-            "Нажмите <b>▶ ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b> когда готовы.</span>"
+            "<span style='color:#aaa'>"
+            "Параметры можно менять в реальном времени — спектр обновится автоматически.<br>"
+            "Поставьте метки 📌 для важных частот, затем нажмите<br>"
+            "<b>▶ ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b></span>"
         )
 
     def _stop_panorama_preview(self) -> None:
+        # Отключаем хендлеры обновления live preview
+        for w in self._settings_widgets:
+            if isinstance(w, (QDoubleSpinBox, QSpinBox)):
+                try: w.valueChanged.disconnect(self._on_preview_settings_changed)
+                except Exception: pass
+            elif isinstance(w, QCheckBox):
+                try: w.toggled.disconnect(self._on_preview_settings_changed)
+                except Exception: pass
         if self._panorama_preview_worker is not None:
             self._panorama_preview_worker.stop()
             self._panorama_preview_worker.wait(2000)
             self._panorama_preview_worker = None
 
     def _on_panorama_preview_spectrum(self, freqs_hz, amps_db) -> None:
-        self.plot.add("Прямой эфир", freqs_hz / 1e6, amps_db, "#39FF14", width=1)
+        self.live_widget.update_spectrum(freqs_hz, amps_db)
 
     def _launch_measurement_from_preview(self) -> None:
         """Переход от live preview к реальному измерению панорамы."""
         self._stop_panorama_preview()
+        if not self._apply_settings_to_cfg():
+            # Невалидные параметры — остаёмся в preview
+            self._start_panorama_preview()
+            return
+        # Блокируем настройки только здесь — в момент запуска измерения
+        self._set_settings_enabled(False)
+        # Переключаем на виджет спектра
+        self._spectrum_stack.setCurrentIndex(0)
+        self.plot.clear()
         try:
             self.ctrl.configure(self.cfg)
         except Exception:
@@ -792,10 +752,10 @@ class MainWindow(QMainWindow):
         self.expert_panel.set_instrument(self.ctrl)
         self.expert_panel.enable_remeasure(False)
 
-        self.table.setRowCount(0)
-        self._stop_overlay()
-        self.plot.enable_live_overlay_btn(False)
         self.plot.clear()
+        # Показываем метки в таблице пока идёт фаза 1 (до обнаружения сигналов)
+        self.wf = None
+        self._refresh_bookmark_table()
 
         self.wf = self._make_workflow()
         self.thread = Worker(self.wf)
@@ -825,6 +785,7 @@ class MainWindow(QMainWindow):
     def _on_table_selection_changed(self):
         if not self.table.selectedItems():
             self.plot.clear_highlight()
+            self.live_widget.highlight_mark(None)
             self.expert_panel.clear_signal()
             return
         row = self.table.currentRow()
@@ -834,13 +795,14 @@ class MainWindow(QMainWindow):
             self.expert_panel.clear_signal()
             return
 
-        # В режиме прямого эфира — перемещаем live-график к выбранной частоте
-        if self.current_step == "live":
+        # В режиме предпросмотра — подсветить метку на live_widget
+        if self.current_step == "live_preview":
             try:
                 freq_mhz = float(freq_item.text())
+                self.live_widget.highlight_mark(freq_mhz)
                 vb = self.live_widget._pw.getPlotItem().getViewBox()
                 x_range = vb.viewRange()[0]
-                half_span = (x_range[1] - x_range[0]) / 2
+                half_span = max((x_range[1] - x_range[0]) / 2, 1.0)
                 vb.setXRange(freq_mhz - half_span, freq_mhz + half_span, padding=0)
             except (ValueError, AttributeError):
                 pass
@@ -1042,7 +1004,6 @@ class MainWindow(QMainWindow):
 
         self.act_save.setEnabled(bool(signals))
         self.act_export_spectrum.setEnabled(True)
-        self.plot.enable_live_overlay_btn(True)
 
         from datetime import datetime as dt
         ts = dt.fromtimestamp(on.timestamp).strftime("%d.%m.%Y %H:%M:%S")
@@ -1150,25 +1111,13 @@ class MainWindow(QMainWindow):
         self.thread = None
         self._resetting = False
 
-        # Отключаем обновление диапазона частот live-режима
-        try:
-            self.spin_start_freq.valueChanged.disconnect(self._on_live_freq_range_changed)
-        except Exception:
-            pass
-        try:
-            self.spin_stop_freq.valueChanged.disconnect(self._on_live_freq_range_changed)
-        except Exception:
-            pass
-
-        self._stop_overlay()
-        self._stop_panorama_preview()
-        self.plot.enable_live_overlay_btn(False)
+        self._stop_panorama_preview()   # также отключает хендлеры настроек
         self.plot.clear()
         self.table.setRowCount(0)
         self.prog.setValue(0)
         self._stop_zero_span()
-        self._stop_live()
         self.live_widget.clear()
+        self.live_widget.highlight_mark(None)
         self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.clear_signal()
         self.expert_panel.set_zero_span_active(False)
@@ -1196,90 +1145,6 @@ class MainWindow(QMainWindow):
         self._set_settings_enabled(True)
 
     # ------------------------------------------------------------------
-    # Live overlay в панораме
-    # ------------------------------------------------------------------
-
-    def _on_panorama_live_toggled(self, checked: bool) -> None:
-        if checked:
-            if not self.ctrl or not self.ctrl.is_connected:
-                from PyQt6.QtWidgets import QMessageBox as _MB
-                _MB.warning(self, "Нет подключения",
-                            "SDR не подключён — live overlay недоступен.")
-                self.plot.btn_live_overlay.blockSignals(True)
-                self.plot.btn_live_overlay.setChecked(False)
-                self.plot.btn_live_overlay.blockSignals(False)
-                return
-
-            from copy import copy as _copy
-            ov_cfg = _copy(self.cfg)
-            ov_cfg.fft_size = 2048
-            ov_cfg.averaging_count = 1
-            ov_cfg.use_max_hold = False
-
-            # Ограничиваем диапазон overlay текущей областью вида для быстрого обновления
-            view_x = self.plot.plot.viewRange()[0]
-            if view_x[0] is not None and view_x[1] is not None:
-                ov_start = max(float(view_x[0]) * 1e6, self.cfg.start_freq_hz)
-                ov_stop  = min(float(view_x[1]) * 1e6, self.cfg.stop_freq_hz)
-                if ov_start < ov_stop:
-                    ov_cfg.start_freq_hz = ov_start
-                    ov_cfg.stop_freq_hz  = ov_stop
-
-            self._overlay_worker = LiveWorker(self.ctrl, ov_cfg)
-            Q = Qt.ConnectionType.QueuedConnection
-            self._overlay_worker.spectrum_ready.connect(
-                lambda f, a: self.plot.update_live_overlay(f / 1e6, a), Q
-            )
-            self._overlay_worker.error.connect(
-                lambda e: self._on_overlay_error(e), Q
-            )
-            self._overlay_worker.start()
-
-            # Обновляем конфиг overlay при зуме/пане
-            vb = self.plot.plot.getPlotItem().getViewBox()
-            vb.sigXRangeChanged.connect(self._update_overlay_range)
-        else:
-            self._stop_overlay()
-
-    def _on_overlay_error(self, err: str) -> None:
-        self._stop_overlay()
-        self.plot.btn_live_overlay.blockSignals(True)
-        self.plot.btn_live_overlay.setChecked(False)
-        self.plot.btn_live_overlay.blockSignals(False)
-        QMessageBox.warning(self, "Live overlay", f"Ошибка получения спектра:\n{err}")
-
-    def _update_overlay_range(self) -> None:
-        """Обновляет диапазон overlay при изменении вида (зум/пан)."""
-        if self._overlay_worker is None:
-            return
-        view_x = self.plot.plot.viewRange()[0]
-        if view_x[0] is None or view_x[1] is None:
-            return
-        from copy import copy as _copy
-        ov_cfg = _copy(self.cfg)
-        ov_cfg.fft_size = 2048
-        ov_cfg.averaging_count = 1
-        ov_cfg.use_max_hold = False
-        ov_start = max(float(view_x[0]) * 1e6, self.cfg.start_freq_hz)
-        ov_stop  = min(float(view_x[1]) * 1e6, self.cfg.stop_freq_hz)
-        if ov_start < ov_stop:
-            ov_cfg.start_freq_hz = ov_start
-            ov_cfg.stop_freq_hz  = ov_stop
-            self._overlay_worker.update_config(ov_cfg)
-
-    def _stop_overlay(self) -> None:
-        if self._overlay_worker is not None:
-            self._overlay_worker.stop()
-            self._overlay_worker.wait(2000)
-            self._overlay_worker = None
-        # Отключаем сигнал зума если был подключён
-        try:
-            vb = self.plot.plot.getPlotItem().getViewBox()
-            vb.sigXRangeChanged.disconnect(self._update_overlay_range)
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
     # Метки из live-режима и панорамы
     # ------------------------------------------------------------------
 
@@ -1287,6 +1152,12 @@ class MainWindow(QMainWindow):
         freq_hz = freq_mhz * 1e6
         if not any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
             self._bookmark_freqs_hz.append(freq_hz)
+        self._refresh_bookmark_table()
+
+    def _on_live_marks_cleared(self) -> None:
+        """Кнопка '✕ Метки' на live_widget — очищаем и список и таблицу."""
+        self._bookmark_freqs_hz.clear()
+        self.plot.clear_panorama_marks()
         self._refresh_bookmark_table()
 
     def _on_panorama_freq_marked(self, freq_mhz: float) -> None:
@@ -1323,7 +1194,6 @@ class MainWindow(QMainWindow):
                           padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
             QPushButton:hover { background-color: #1976D2; }
         """)
-        self.plot.enable_live_overlay_btn(True)
         self.expert_panel.enable_remeasure(True)
 
     def _plot_data(self, on, off, diff):

@@ -1,32 +1,31 @@
 import time
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
-                              QLabel, QPushButton, QDoubleSpinBox)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel)
 from PyQt6.QtCore import Qt, pyqtSignal
 
 
 class LiveWidget(QWidget):
     """
-    Режим прямого эфира — живой спектр с Peak Hold и маркировкой частот.
-
-    Метки (📌): включить режим кнопкой «Метка», затем кликнуть на график.
-    Помеченные частоты хранятся в marked_freqs_mhz и доступны из MainWindow
-    для последующего запуска панорамы.
+    Live-спектр с Peak Hold и маркировкой частот.
+    Оформление соответствует SpectrumPlotWidget.
     """
 
-    freq_marked = pyqtSignal(float)    # МГц, при добавлении метки
-    freq_selected = pyqtSignal(float)  # МГц, при клике вне режима меток кликом
+    freq_marked  = pyqtSignal(float)   # МГц, при добавлении метки
+    freq_selected = pyqtSignal(float)  # МГц, при клике вне режима меток
+    marks_cleared = pyqtSignal()       # все метки удалены пользователем
 
-    _DB_MIN = -95.0
-    _DB_MAX = -40.0
+    _EMA_ALPHA   = 0.35    # коэффициент EMA-сглаживания живого спектра
+    _ZOOM_FACTOR = 0.7
 
     def __init__(self) -> None:
         super().__init__()
-        self._peak_hold: np.ndarray | None = None
-        self._show_peak = True
+        self._peak_hold:    np.ndarray | None = None
+        self._ema_spectrum: np.ndarray | None = None
+        self._show_peak  = True
+        self._mark_mode  = False
         self._x_initialized = False
-        self._last_time = time.time()
+        self._last_time  = time.time()
         self._frame_count = 0
         self._marked_lines: list = []
         self.marked_freqs_mhz: list[float] = []
@@ -37,130 +36,36 @@ class LiveWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(self._build_toolbar())
-        root.addWidget(self._build_plot(), 1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._build_plot_widget()
+        layout.addWidget(self._pw)
 
-    def _build_toolbar(self) -> QWidget:
-        bar = QWidget()
-        bar.setStyleSheet("background-color: #141418; border-bottom: 1px solid #2a2a2a;")
-        bar.setFixedHeight(36)
-
-        lo = QHBoxLayout(bar)
-        lo.setContentsMargins(8, 4, 8, 4)
-        lo.setSpacing(10)
-
-        _btn = """
-            QPushButton {
-                background-color: #252525; color: #bbb; border: 1px solid #3a3a3a;
-                padding: 2px 10px; border-radius: 3px; font-size: 11px;
-            }
-            QPushButton:hover   { background-color: #333; }
-            QPushButton:checked { background-color: #1565C0; color: white; border-color: #1976D2; }
-        """
-        _btn_mark = """
-            QPushButton {
-                background-color: #252525; color: #bbb; border: 1px solid #3a3a3a;
-                padding: 2px 10px; border-radius: 3px; font-size: 11px;
-            }
-            QPushButton:hover   { background-color: #333; }
-            QPushButton:checked { background-color: #E65100; color: white; border-color: #FF6D00; }
-        """
-        _spin_style = """
-            QDoubleSpinBox {
-                background-color: #252525; color: #bbb; border: 1px solid #3a3a3a;
-                border-radius: 3px; padding: 1px 2px; font-size: 11px;
-            }
-        """
-        _lbl = "color: #666; font-size: 11px;"
-
-        self.btn_peak = QPushButton("Peak Hold")
-        self.btn_peak.setCheckable(True)
-        self.btn_peak.setChecked(True)
-        self.btn_peak.setStyleSheet(_btn)
-        self.btn_peak.toggled.connect(self._on_peak_toggle)
-
-        self.btn_reset_peak = QPushButton("⟲ Сброс Peak")
-        self.btn_reset_peak.setStyleSheet(_btn)
-        self.btn_reset_peak.clicked.connect(self.reset_peak)
-
-        self.btn_mark = QPushButton("📌 Метка")
-        self.btn_mark.setCheckable(True)
-        self.btn_mark.setStyleSheet(_btn_mark)
-        self.btn_mark.setToolTip("Включить режим меток: кликните на спектр для пометки частоты")
-
-        self.btn_clear_marks = QPushButton("✕ Метки")
-        self.btn_clear_marks.setStyleSheet(_btn)
-        self.btn_clear_marks.setToolTip("Удалить все метки")
-        self.btn_clear_marks.clicked.connect(self.clear_marks)
-
-        self.lbl_marks = QLabel("")
-        self.lbl_marks.setStyleSheet("color: #FF9800; font-size: 11px; min-width: 24px;")
-
-        lbl_min = QLabel("Мин дБ:")
-        lbl_min.setStyleSheet(_lbl)
-        self.spin_db_min = self._make_spin(-140, 0, self._DB_MIN, _spin_style)
-        self.spin_db_min.valueChanged.connect(self._on_db_range_changed)
-
-        lbl_max = QLabel("Макс дБ:")
-        lbl_max.setStyleSheet(_lbl)
-        self.spin_db_max = self._make_spin(-140, 0, self._DB_MAX, _spin_style)
-        self.spin_db_max.valueChanged.connect(self._on_db_range_changed)
-
-        self.lbl_fps = QLabel("—")
-        self.lbl_fps.setStyleSheet("color: #444; font-size: 11px;")
-
-        lo.addWidget(self.btn_peak)
-        lo.addWidget(self.btn_reset_peak)
-        lo.addSpacing(14)
-        lo.addWidget(self.btn_mark)
-        lo.addWidget(self.btn_clear_marks)
-        lo.addWidget(self.lbl_marks)
-        lo.addSpacing(14)
-        lo.addWidget(lbl_min)
-        lo.addWidget(self.spin_db_min)
-        lo.addWidget(lbl_max)
-        lo.addWidget(self.spin_db_max)
-        lo.addStretch()
-        lo.addWidget(self.lbl_fps)
-        return bar
-
-    @staticmethod
-    def _make_spin(lo, hi, val, style) -> QDoubleSpinBox:
-        s = QDoubleSpinBox()
-        s.setRange(lo, hi)
-        s.setValue(val)
-        s.setSingleStep(5.0)
-        s.setDecimals(0)
-        s.setFixedWidth(58)
-        s.setStyleSheet(style)
-        return s
-
-    def _build_plot(self) -> QWidget:
+    def _build_plot_widget(self) -> None:
         self._pw = pg.PlotWidget()
-        self._pw.setBackground("#06060a")
+        self._pw.setBackground("#2b2b2b")
         self._pw.setAntialiasing(True)
 
         pi = self._pw.getPlotItem()
-        pi.setLabel("left",   "Уровень, дБ",    color="#777")
-        pi.setLabel("bottom", "Частота, МГц",   color="#777")
+        pi.setLabel("left",   "Уровень, дБ",  color="#ffffff", size="12px")
+        pi.setLabel("bottom", "Частота, МГц", color="#ffffff", size="12px")
+        pi.setTitle("Прямой эфир", color="#ffffff")
         pi.showGrid(x=True, y=True, alpha=0.2)
         pi.setClipToView(True)
         pi.setDownsampling(auto=True, mode="peak")
 
-        for axis_name in ("left", "bottom"):
-            ax = pi.getAxis(axis_name)
-            ax.setTextPen(pg.mkPen("#888"))
-            ax.setPen(pg.mkPen("#333"))
+        for name in ("left", "bottom"):
+            ax = pi.getAxis(name)
+            ax.setTextPen(pg.mkPen("#ffffff"))
+            ax.setPen(pg.mkPen("#555"))
 
         vb = pi.getViewBox()
         vb.setMouseMode(pg.ViewBox.PanMode)
-        vb.setYRange(self._DB_MIN, self._DB_MAX, padding=0.05)
-        vb.disableAutoRange(axis=pg.ViewBox.YAxis)
 
-        # Живой спектр — неоновый зелёный с полупрозрачной заливкой (gqrx-стиль)
+        self.legend = pi.addLegend(offset=(10, 10))
+        if self.legend:
+            self.legend.setBrush(pg.mkBrush(50, 50, 50, 200))
+
         self._live_curve = pi.plot(
             [], [],
             pen=pg.mkPen("#39FF14", width=1.5),
@@ -168,7 +73,6 @@ class LiveWidget(QWidget):
             fillLevel=-300,
             fillBrush=pg.mkBrush(57, 255, 20, 22),
         )
-        # Peak Hold — оранжевый пунктир
         self._peak_curve = pi.plot(
             [], [],
             pen=pg.mkPen("#FF8C00", width=1, style=Qt.PenStyle.DashLine),
@@ -176,18 +80,98 @@ class LiveWidget(QWidget):
         )
         self._peak_curve.setVisible(self._show_peak)
 
-        legend = pi.addLegend(offset=(10, 5))
-        if legend:
-            legend.setBrush(pg.mkBrush(10, 10, 18, 220))
-            legend.setLabelTextColor(pg.mkColor("#999"))
-
         self._pw.scene().sigMouseClicked.connect(self._on_plot_click)
 
-        w = QWidget()
-        inner = QVBoxLayout(w)
-        inner.setContentsMargins(0, 0, 0, 0)
-        inner.addWidget(self._pw)
-        return w
+        _btn = """
+            QPushButton { background-color: #555; color: white; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:hover { background-color: #777; }
+        """
+        _btn_check = """
+            QPushButton { background-color: #555; color: #aaa; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:checked { background-color: #E65100; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """
+        _btn_peak_style = """
+            QPushButton { background-color: #555; color: #aaa; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:checked { background-color: #2E7D32; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """
+
+        # ── Панель управления (верхний правый угол) ────────────────────
+        self.control_panel = QWidget(self._pw)
+        self.control_panel.setStyleSheet(
+            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+        )
+        cp = QHBoxLayout(self.control_panel)
+        cp.setContentsMargins(5, 5, 5, 5)
+        cp.setSpacing(5)
+
+        self.btn_auto_scale = QPushButton("⟲ Сброс")
+        self.btn_auto_scale.setStyleSheet(_btn)
+        self.btn_auto_scale.setToolTip("Сбросить масштаб")
+        self.btn_auto_scale.clicked.connect(self.reset_view)
+
+        self.btn_peak = QPushButton("Peak Hold")
+        self.btn_peak.setCheckable(True)
+        self.btn_peak.setChecked(True)
+        self.btn_peak.setStyleSheet(_btn_peak_style)
+        self.btn_peak.toggled.connect(self._on_peak_toggle)
+
+        self.btn_reset_peak = QPushButton("⟲ Peak")
+        self.btn_reset_peak.setStyleSheet(_btn)
+        self.btn_reset_peak.clicked.connect(self.reset_peak)
+
+        self.btn_mark = QPushButton("📌 Метка")
+        self.btn_mark.setCheckable(True)
+        self.btn_mark.setStyleSheet(_btn_check)
+        self.btn_mark.setToolTip("Режим меток: кликните на спектр для отметки частоты")
+
+        self.btn_clear_marks = QPushButton("✕ Метки")
+        self.btn_clear_marks.setStyleSheet(_btn)
+        self.btn_clear_marks.setToolTip("Удалить все метки")
+        self.btn_clear_marks.clicked.connect(self._on_clear_marks_clicked)
+
+        self.lbl_fps = QLabel("—")
+        self.lbl_fps.setStyleSheet("color: #666; font-size: 11px; min-width: 45px;")
+
+        for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
+                  self.btn_mark, self.btn_clear_marks, self.lbl_fps):
+            cp.addWidget(w)
+
+        # ── Кнопки масштабирования (нижний правый угол) ───────────────
+        self.zoom_panel = QWidget(self._pw)
+        self.zoom_panel.setStyleSheet(
+            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+        )
+        zp = QHBoxLayout(self.zoom_panel)
+        zp.setContentsMargins(5, 5, 5, 5)
+        zp.setSpacing(8)
+
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_in.setFixedSize(28, 28)
+        self.btn_zoom_in.setStyleSheet(_btn)
+        self.btn_zoom_in.clicked.connect(self._zoom_in)
+
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_out.setFixedSize(28, 28)
+        self.btn_zoom_out.setStyleSheet(_btn)
+        self.btn_zoom_out.clicked.connect(self._zoom_out)
+
+        zp.addWidget(self.btn_zoom_in)
+        zp.addWidget(self.btn_zoom_out)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.control_panel.adjustSize()
+        pw = self.control_panel.width()
+        self.control_panel.move(self.width() - pw - 10, 10)
+        self.zoom_panel.adjustSize()
+        zw = self.zoom_panel.width()
+        zh = self.zoom_panel.height()
+        self.zoom_panel.move(self.width() - zw - 40, self.height() - zh - 60)
 
     # ------------------------------------------------------------------
     # Публичный API
@@ -197,8 +181,14 @@ class LiveWidget(QWidget):
         freqs_mhz = freqs_hz / 1e6
         n = len(amps_db)
 
-        self._live_curve.setData(freqs_mhz, amps_db)
+        # EMA-сглаживание убирает дёрганье при переходах полос SDR
+        if self._ema_spectrum is None or len(self._ema_spectrum) != n:
+            self._ema_spectrum = amps_db.copy()
+        else:
+            self._ema_spectrum += self._EMA_ALPHA * (amps_db - self._ema_spectrum)
+        self._live_curve.setData(freqs_mhz, self._ema_spectrum)
 
+        # Peak Hold по сырым данным
         if self._peak_hold is None or len(self._peak_hold) != n:
             self._peak_hold = amps_db.copy()
         else:
@@ -206,7 +196,6 @@ class LiveWidget(QWidget):
         if self._show_peak:
             self._peak_curve.setData(freqs_mhz, self._peak_hold)
 
-        # X-диапазон устанавливается один раз при первом кадре, далее пользователь зумирует
         if not self._x_initialized:
             vb = self._pw.getPlotItem().getViewBox()
             vb.setXRange(float(freqs_mhz.min()), float(freqs_mhz.max()), padding=0.01)
@@ -216,7 +205,7 @@ class LiveWidget(QWidget):
         now = time.time()
         dt = now - self._last_time
         if dt >= 1.0:
-            self.lbl_fps.setText(f"{self._frame_count / dt:.0f} кадр/с")
+            self.lbl_fps.setText(f"{self._frame_count / dt:.0f} к/с")
             self._frame_count = 0
             self._last_time = now
 
@@ -224,8 +213,17 @@ class LiveWidget(QWidget):
         self._peak_hold = None
         self._peak_curve.setData([], [])
 
+    def reset_view(self) -> None:
+        """Сбросить масштаб: X по текущим данным, Y авто."""
+        vb = self._pw.getPlotItem().getViewBox()
+        data = self._live_curve.getData()
+        if data[0] is not None and len(data[0]) > 0:
+            vb.setXRange(float(data[0].min()), float(data[0].max()), padding=0.01)
+        vb.enableAutoRange(axis=pg.ViewBox.YAxis)
+
     def clear(self) -> None:
-        self._peak_hold = None
+        self._peak_hold    = None
+        self._ema_spectrum = None
         self._x_initialized = False
         self._live_curve.setData([], [])
         self._peak_curve.setData([], [])
@@ -239,24 +237,54 @@ class LiveWidget(QWidget):
             pi.removeItem(line)
         self._marked_lines.clear()
         self.marked_freqs_mhz.clear()
-        self._update_mark_label()
+
+    def set_marks(self, freqs_mhz: list) -> None:
+        """Синхронизировать метки с внешним списком. Сигнал freq_marked не испускается."""
+        self.clear_marks()
+        pi = self._pw.getPlotItem()
+        for f in freqs_mhz:
+            line = self._make_mark_line(f)
+            line.setPos(f)
+            pi.addItem(line)
+            self._marked_lines.append(line)
+            self.marked_freqs_mhz.append(f)
+
+    def highlight_mark(self, freq_mhz) -> None:
+        """Подсветить метку белым. Передать None для сброса подсветки."""
+        for line, f in zip(self._marked_lines, self.marked_freqs_mhz):
+            is_sel = freq_mhz is not None and abs(f - freq_mhz) < 0.001
+            color  = "#FFFFFF" if is_sel else "#FF9800"
+            width  = 2.5      if is_sel else 1.5
+            line.setPen(pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine))
 
     # ------------------------------------------------------------------
     # Приватные методы
     # ------------------------------------------------------------------
+
+    def _make_mark_line(self, freq_mhz: float, highlighted: bool = False) -> pg.InfiniteLine:
+        color = "#FFFFFF" if highlighted else "#FF9800"
+        width = 2.5      if highlighted else 1.5
+        return pg.InfiniteLine(
+            angle=90,
+            movable=False,
+            pen=pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine),
+            label=f"{freq_mhz:.3f} МГц",
+            labelOpts={
+                "color": color,
+                "position": 0.88,
+                "fill": pg.mkBrush(20, 10, 0, 190),
+            },
+        )
+
+    def _on_clear_marks_clicked(self) -> None:
+        self.clear_marks()
+        self.marks_cleared.emit()
 
     def _on_peak_toggle(self, checked: bool) -> None:
         self._show_peak = checked
         self._peak_curve.setVisible(checked)
         if not checked:
             self._peak_curve.setData([], [])
-
-    def _on_db_range_changed(self) -> None:
-        lo = self.spin_db_min.value()
-        hi = self.spin_db_max.value()
-        if lo < hi:
-            vb = self._pw.getPlotItem().getViewBox()
-            vb.setYRange(lo, hi, padding=0.05)
 
     def _on_plot_click(self, event) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
@@ -271,24 +299,23 @@ class LiveWidget(QWidget):
             self.freq_selected.emit(freq_mhz)
 
     def _add_mark(self, freq_mhz: float) -> None:
-        line = pg.InfiniteLine(
-            angle=90,
-            movable=False,
-            pen=pg.mkPen("#FF9800", width=1.5, style=Qt.PenStyle.DashLine),
-            label=f"{freq_mhz:.3f} МГц",
-            labelOpts={
-                "color": "#FF9800",
-                "position": 0.88,
-                "fill": pg.mkBrush(20, 10, 0, 190),
-            },
-        )
+        line = self._make_mark_line(freq_mhz)
         line.setPos(freq_mhz)
         self._pw.getPlotItem().addItem(line)
         self._marked_lines.append(line)
         self.marked_freqs_mhz.append(freq_mhz)
-        self._update_mark_label()
         self.freq_marked.emit(freq_mhz)
 
-    def _update_mark_label(self) -> None:
-        n = len(self.marked_freqs_mhz)
-        self.lbl_marks.setText(f"📌 {n}" if n else "")
+    def _zoom_in(self) -> None:
+        vb = self._pw.getPlotItem().getViewBox()
+        x0, x1 = vb.viewRange()[0]
+        cx = (x0 + x1) / 2
+        half = (x1 - x0) / 2 * self._ZOOM_FACTOR
+        vb.setXRange(cx - half, cx + half, padding=0)
+
+    def _zoom_out(self) -> None:
+        vb = self._pw.getPlotItem().getViewBox()
+        x0, x1 = vb.viewRange()[0]
+        cx = (x0 + x1) / 2
+        half = (x1 - x0) / 2 / self._ZOOM_FACTOR
+        vb.setXRange(cx - half, cx + half, padding=0)
