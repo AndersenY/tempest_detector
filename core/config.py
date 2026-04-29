@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 @dataclass
 class PanoramaConfig:
-    start_freq_hz: float = 80e6
-    stop_freq_hz: float = 100e6
+    start_freq_hz: float = 102e6
+    stop_freq_hz: float = 104e6
     fft_size: int = 32768
     # Рекомендуемое значение по РЭ п. 8.2: усреднение 10–15 раз подавляет шум
     # без использования MaxHold, который завышает уровень шума.

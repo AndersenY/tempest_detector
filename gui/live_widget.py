@@ -224,30 +224,31 @@ class LiveWidget(QWidget):
     def update_spectrum(self, freqs_hz: np.ndarray, amps_db: np.ndarray) -> None:
         freqs_mhz = freqs_hz / 1e6
         n = len(amps_db)
+        data_min = float(freqs_mhz.min())
+        data_max = float(freqs_mhz.max())
 
-        # EMA-сглаживание убирает дёрганье при переходах полос SDR
-        if self._ema_spectrum is None or len(self._ema_spectrum) != n:
+        # Определяем, сменился ли частотный диапазон (ретюнинг > 50 кГц)
+        range_shifted = (abs(data_min - self._last_data_min) > 0.05 or
+                         abs(data_max - self._last_data_max) > 0.05)
+
+        # EMA-сглаживание; при смене диапазона — сброс для чистого старта
+        if self._ema_spectrum is None or len(self._ema_spectrum) != n or range_shifted:
             self._ema_spectrum = amps_db.copy()
         else:
             self._ema_spectrum += self._EMA_ALPHA * (amps_db - self._ema_spectrum)
         self._live_curve.setData(freqs_mhz, self._ema_spectrum)
 
-        # Peak Hold по сырым данным
-        if self._peak_hold is None or len(self._peak_hold) != n:
+        # Peak Hold; при смене диапазона сбрасываем — старые данные к новым частотам не относятся
+        if self._peak_hold is None or len(self._peak_hold) != n or range_shifted:
             self._peak_hold = amps_db.copy()
         else:
             np.maximum(self._peak_hold, amps_db, out=self._peak_hold)
         if self._show_peak:
             self._peak_curve.setData(freqs_mhz, self._peak_hold)
 
-        data_min = float(freqs_mhz.min())
-        data_max = float(freqs_mhz.max())
-
         # Выравниваем вид под реальные данные:
         #   — при первом кадре (нет паддинга → нет пустого левого края)
-        #   — после ретюнинга (диапазон данных сместился > 50 кГц)
-        range_shifted = (abs(data_min - self._last_data_min) > 0.05 or
-                         abs(data_max - self._last_data_max) > 0.05)
+        #   — после ретюнинга (диапазон данных сместился)
         if not self._x_initialized or (self._follow_span_mhz is not None and range_shifted):
             vb = self._pw.getPlotItem().getViewBox()
             self._snap_in_progress = True
