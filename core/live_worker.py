@@ -1,4 +1,5 @@
 import time
+import threading
 from copy import copy
 from PyQt6.QtCore import QThread, pyqtSignal
 from .backends import BaseInstrument
@@ -22,13 +23,15 @@ class LiveWorker(QThread):
         self._cfg = cfg
         self._stop = False
         self._pending_cfg: PanoramaConfig | None = None
+        self._cfg_lock = threading.Lock()
 
     def stop(self) -> None:
         self._stop = True
 
     def update_config(self, cfg: PanoramaConfig) -> None:
         """Применить новый конфиг на лету (вступит в силу на следующей итерации)."""
-        self._pending_cfg = copy(cfg)
+        with self._cfg_lock:
+            self._pending_cfg = copy(cfg)
 
     # Минимальный интервал между кадрами.
     # Предотвращает переполнение очереди сигналов Qt когда бэкенд
@@ -42,9 +45,11 @@ class LiveWorker(QThread):
             while not self._stop:
                 t0 = time.perf_counter()
 
-                if self._pending_cfg is not None:
-                    self._cfg = self._pending_cfg
+                with self._cfg_lock:
+                    pending = self._pending_cfg
                     self._pending_cfg = None
+                if pending is not None:
+                    self._cfg = pending
                     self._ctrl.configure(self._cfg)
 
                 spec = self._ctrl.capture_spectrum()

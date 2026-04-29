@@ -98,6 +98,7 @@ class RtlSdrBackend(BaseInstrument):
         window = np.hanning(cfg.fft_size)
         avg_power = np.zeros(cfg.fft_size, dtype=np.float64)
         max_power = np.full(cfg.fft_size, -np.inf, dtype=np.float64)
+        valid_count = 0
 
         for _ in range(cfg.averaging_count):
             time.sleep(0.01)
@@ -106,13 +107,18 @@ class RtlSdrBackend(BaseInstrument):
             except Exception as e:
                 raise RuntimeError(f"Ошибка чтения сэмплов: {e}")
             if len(raw) < cfg.fft_size:
+                # RTL-SDR вернул неполный буфер; остальные итерации тоже не помогут
                 break
             fft_vals = np.fft.fftshift(np.fft.fft(np.array(raw) * window))
             power = np.abs(fft_vals) ** 2
             avg_power += power
             np.maximum(max_power, power, out=max_power)
+            valid_count += 1
 
-        power_sel = max_power if cfg.use_max_hold else avg_power / cfg.averaging_count
+        if valid_count == 0:
+            raise RuntimeError("RTL-SDR вернул неполные данные — проверьте подключение устройства")
+
+        power_sel = max_power if cfg.use_max_hold else avg_power / valid_count
         db_vals = 10 * np.log10(power_sel + 1e-12) + cfg.calibration_offset_db
 
         sr = self._sdr.sample_rate

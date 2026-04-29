@@ -262,7 +262,6 @@ class ExpertPanel(QGroupBox):
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
             btn.setEnabled(False)
 
-        self._worker._mode = mode
         self._worker.start()
 
     def _on_remeasure_done(self, freq_hz: float, amp_db: float) -> None:

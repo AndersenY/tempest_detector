@@ -33,16 +33,15 @@ class PanoramaProcessor:
             return signals
         sep = self.cfg.min_separation_hz
         sorted_sigs = sorted(signals, key=lambda s: s.frequency_hz)
-        kept: List[PEMINSignal] = []
-        i = 0
-        while i < len(sorted_sigs):
-            group = [sorted_sigs[i]]
-            j = i + 1
-            while j < len(sorted_sigs) and sorted_sigs[j].frequency_hz - sorted_sigs[i].frequency_hz < sep:
-                group.append(sorted_sigs[j])
-                j += 1
-            kept.append(max(group, key=lambda s: s.amplitude_diff_db))
-            i = j
+        # Greedy scan: compare each candidate to the last kept signal.
+        # Guarantees that no two kept signals are within sep Hz of each other,
+        # even when the strongest in a cluster is not the leftmost element.
+        kept: List[PEMINSignal] = [sorted_sigs[0]]
+        for sig in sorted_sigs[1:]:
+            if sig.frequency_hz - kept[-1].frequency_hz >= sep:
+                kept.append(sig)
+            elif sig.amplitude_diff_db > kept[-1].amplitude_diff_db:
+                kept[-1] = sig
         return kept
 
     def _group_triplets(self, indices: np.ndarray, diff_db: np.ndarray, on: Spectrum) -> List[PEMINSignal]:

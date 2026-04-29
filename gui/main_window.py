@@ -541,7 +541,7 @@ class MainWindow(QMainWindow):
         # Ждём завершения потока перед освобождением SDR
         # (предотвращает Segmentation fault при быстром нажатии Сброс → Старт)
         if self.thread is not None and self.thread.isRunning():
-            self.thread.wait(3000)
+            self.thread.wait(10_000)
 
         self._do_ui_reset()
 
@@ -901,6 +901,7 @@ class MainWindow(QMainWindow):
         self._zs_worker = ZeroSpanWorker(self.ctrl, copy(self.cfg), freq_hz)
         self._zs_worker.amplitude_updated.connect(self.zero_span_widget.add_point)
         self._zs_worker.amplitude_updated.connect(self._audio.set_amplitude)
+        self._zs_worker.error.connect(self._on_zero_span_error)
         self._zs_worker.start()
         self._audio.start()
         self.expert_panel.enable_remeasure(False)
@@ -911,6 +912,12 @@ class MainWindow(QMainWindow):
         self.expert_panel.set_zero_span_active(False)
         if self.current_step == "idle":
             self.expert_panel.enable_remeasure(True)
+
+    def _on_zero_span_error(self, msg: str) -> None:
+        self._stop_zero_span()
+        self._spectrum_stack.setCurrentIndex(0)
+        self.expert_panel.set_zero_span_active(False)
+        QMessageBox.warning(self, "Zero Span", f"Ошибка измерения:\n{msg}")
 
     def _stop_zero_span(self) -> None:
         if self._zs_worker is not None:

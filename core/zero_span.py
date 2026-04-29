@@ -15,6 +15,7 @@ class ZeroSpanWorker(QThread):
     """
 
     amplitude_updated = pyqtSignal(float)   # текущий уровень в дБ
+    error = pyqtSignal(str)
 
     _HALF_SPAN = 250_000   # ±250 кГц — минимально надёжный диапазон для RTL-SDR
 
@@ -45,8 +46,9 @@ class ZeroSpanWorker(QThread):
                 )
                 if not self._stop:
                     self.amplitude_updated.emit(amp)
-        except Exception:
-            pass
+        except Exception as e:
+            if not self._stop:
+                self.error.emit(str(e))
         finally:
             try:
                 self._ctrl.configure(self._cfg)
