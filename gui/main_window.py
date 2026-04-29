@@ -245,6 +245,7 @@ class MainWindow(QMainWindow):
         self.live_widget.marks_cleared.connect(self._on_live_marks_cleared)
         self.plot.fullscreen_toggled.connect(self._toggle_graph_fullscreen)
         self.live_widget.fullscreen_toggled.connect(self._toggle_graph_fullscreen)
+        self.live_widget.view_range_changed.connect(self._on_live_view_range_changed)
         self._spectrum_stack = QStackedWidget()
         self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
         self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
@@ -615,6 +616,8 @@ class MainWindow(QMainWindow):
             center = (start_hz + stop_hz) / 2
             cfg.start_freq_hz = max(center - 1_000_000, 24e6)
             cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
+        bw_mhz = (cfg.stop_freq_hz - cfg.start_freq_hz) / 1e6
+        self.live_widget.set_follow_mode(bw_mhz)
         self._panorama_preview_worker.update_config(cfg)
         # Немедленно обновляем X-диапазон и включаем Y-авторазмер
         vb = self.live_widget._pw.getPlotItem().getViewBox()
@@ -625,6 +628,28 @@ class MainWindow(QMainWindow):
     def _sync_live_marks(self) -> None:
         """Синхронизирует метки на live_widget с _bookmark_freqs_hz."""
         self.live_widget.set_marks([f / 1e6 for f in self._bookmark_freqs_hz])
+
+    def _on_live_view_range_changed(self, start_mhz: float, stop_mhz: float) -> None:
+        """Оператор сдвинул live-вид — ретюним SDR и обновляем спиннеры."""
+        if self.current_step != "live_preview" or self._panorama_preview_worker is None:
+            return
+        # Обновляем спиннеры без срабатывания _on_preview_settings_changed
+        self.spin_start_freq.blockSignals(True)
+        self.spin_stop_freq.blockSignals(True)
+        self.spin_start_freq.setValue(start_mhz)
+        self.spin_stop_freq.setValue(stop_mhz)
+        self.spin_start_freq.blockSignals(False)
+        self.spin_stop_freq.blockSignals(False)
+        # Перестраиваем SDR на новый центр
+        from copy import copy as _copy
+        cfg = _copy(self.cfg)
+        cfg.start_freq_hz   = start_mhz * 1e6
+        cfg.stop_freq_hz    = stop_mhz * 1e6
+        cfg.sdr_gain_db     = self.spin_gain.value()
+        cfg.fft_size        = 2048
+        cfg.averaging_count = 1
+        cfg.use_max_hold    = False
+        self._panorama_preview_worker.update_config(cfg)
 
     def _on_table_context_menu(self, pos) -> None:
         """Правый клик по строке — удалить метку (доступно в preview и idle)."""
@@ -709,6 +734,9 @@ class MainWindow(QMainWindow):
             prev_cfg.start_freq_hz = max(center - 1_000_000, 24e6)
             prev_cfg.stop_freq_hz  = min(center + 1_000_000, 1_750e6)
 
+        bw_mhz = (prev_cfg.stop_freq_hz - prev_cfg.start_freq_hz) / 1e6
+        self.live_widget.set_follow_mode(bw_mhz)
+
         self._panorama_preview_worker = LiveWorker(self.ctrl, prev_cfg)
         Q = Qt.ConnectionType.QueuedConnection
         self._panorama_preview_worker.spectrum_ready.connect(
@@ -747,6 +775,7 @@ class MainWindow(QMainWindow):
             elif isinstance(w, QCheckBox):
                 try: w.toggled.disconnect(self._on_preview_settings_changed)
                 except Exception: pass
+        self.live_widget.set_follow_mode(None)
         if self._panorama_preview_worker is not None:
             self._panorama_preview_worker.stop()
             self._panorama_preview_worker.wait(2000)

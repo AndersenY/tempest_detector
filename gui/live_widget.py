@@ -2,7 +2,7 @@ import time
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel)
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 
 class LiveWidget(QWidget):
@@ -11,10 +11,11 @@ class LiveWidget(QWidget):
     Оформление соответствует SpectrumPlotWidget.
     """
 
-    freq_marked        = pyqtSignal(float)   # МГц, при добавлении метки
-    freq_selected      = pyqtSignal(float)  # МГц, при клике вне режима меток
-    marks_cleared      = pyqtSignal()       # все метки удалены пользователем
-    fullscreen_toggled = pyqtSignal(bool)   # True = полный экран
+    freq_marked        = pyqtSignal(float)        # МГц, при добавлении метки
+    freq_selected      = pyqtSignal(float)       # МГц, при клике вне режима меток
+    marks_cleared      = pyqtSignal()            # все метки удалены пользователем
+    fullscreen_toggled = pyqtSignal(bool)        # True = полный экран
+    view_range_changed = pyqtSignal(float, float)  # (start_mhz, stop_mhz) после дебаунса
 
     _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
     _EMA_ALPHA   = 0.35    # коэффициент EMA-сглаживания живого спектра
@@ -34,6 +35,13 @@ class LiveWidget(QWidget):
         self._highlight_line: pg.InfiniteLine | None = None
         self._highlight_enabled = True
         self._last_highlight_mhz: float | None = None
+        # Follow-режим: фиксированная ширина полосы + ретюнинг при пане
+        self._follow_span_mhz: float | None = None
+        self._span_enforcing = False
+        self._pending_range: tuple | None = None
+        self._range_timer = QTimer()
+        self._range_timer.setSingleShot(True)
+        self._range_timer.timeout.connect(self._emit_pending_range)
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -66,6 +74,7 @@ class LiveWidget(QWidget):
 
         vb = pi.getViewBox()
         vb.setMouseMode(pg.ViewBox.PanMode)
+        vb.sigXRangeChanged.connect(self._on_x_range_changed)
 
         self.legend = pi.addLegend(offset=(10, 10))
         if self.legend:
@@ -390,6 +399,11 @@ class LiveWidget(QWidget):
     def _zoom_in(self) -> None:
         vb = self._pw.getPlotItem().getViewBox()
         x0, x1 = vb.viewRange()[0]
+        if self._follow_span_mhz is not None:
+            # В follow-режиме: шаг вправо на половину полосы
+            step = self._follow_span_mhz / 2
+            vb.setXRange(x0 + step, x1 + step, padding=0)
+            return
         cx = (x0 + x1) / 2
         half = (x1 - x0) / 2 * self._ZOOM_FACTOR
         vb.setXRange(cx - half, cx + half, padding=0)
@@ -397,6 +411,42 @@ class LiveWidget(QWidget):
     def _zoom_out(self) -> None:
         vb = self._pw.getPlotItem().getViewBox()
         x0, x1 = vb.viewRange()[0]
+        if self._follow_span_mhz is not None:
+            # В follow-режиме: шаг влево на половину полосы
+            step = self._follow_span_mhz / 2
+            vb.setXRange(x0 - step, x1 - step, padding=0)
+            return
         cx = (x0 + x1) / 2
         half = (x1 - x0) / 2 / self._ZOOM_FACTOR
         vb.setXRange(cx - half, cx + half, padding=0)
+
+    # ------------------------------------------------------------------
+    # Follow-режим: фиксированная полоса, ретюнинг при пане
+    # ------------------------------------------------------------------
+
+    def set_follow_mode(self, span_mhz: float | None) -> None:
+        """Включить/выключить follow-режим. span_mhz=None — выключить."""
+        self._follow_span_mhz = span_mhz
+
+    def _on_x_range_changed(self, vb, range_) -> None:
+        if self._follow_span_mhz is None or self._span_enforcing:
+            return
+        x0, x1 = float(range_[0]), float(range_[1])
+        span = x1 - x0
+        cx = (x0 + x1) / 2
+        if abs(span - self._follow_span_mhz) > 0.01:
+            # Пользователь изменил зум — восстанавливаем фиксированную ширину
+            half = self._follow_span_mhz / 2
+            self._span_enforcing = True
+            vb.setXRange(cx - half, cx + half, padding=0)
+            self._span_enforcing = False
+            return
+        # Пан — планируем ретюнинг с дебаунсом 300 мс
+        self._pending_range = (cx - self._follow_span_mhz / 2,
+                               cx + self._follow_span_mhz / 2)
+        self._range_timer.start(300)
+
+    def _emit_pending_range(self) -> None:
+        if self._pending_range is not None:
+            self.view_range_changed.emit(*self._pending_range)
+            self._pending_range = None
