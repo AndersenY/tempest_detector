@@ -201,7 +201,10 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
 
         # Панель прогресса + стоп
-        top_control_layout = QHBoxLayout()
+        self._top_bar = QWidget()
+        top_control_layout = QHBoxLayout(self._top_bar)
+        top_control_layout.setContentsMargins(0, 0, 0, 0)
+        top_control_layout.setSpacing(5)
 
         self.prog = QProgressBar()
         self.prog.setTextVisible(True)
@@ -225,10 +228,11 @@ class MainWindow(QMainWindow):
 
         top_control_layout.addWidget(self.prog, 1)
         top_control_layout.addWidget(self.btn_stop)
-        main_layout.addLayout(top_control_layout)
+        main_layout.addWidget(self._top_bar)
 
         # Панель параметров измерения
-        main_layout.addWidget(self._create_settings_panel())
+        self._settings_panel = self._create_settings_panel()
+        main_layout.addWidget(self._settings_panel)
 
         # График спектра / Zero Span (переключаются через QStackedWidget)
         self.plot = SpectrumPlotWidget()
@@ -239,6 +243,8 @@ class MainWindow(QMainWindow):
         self.live_widget.freq_marked.connect(self._on_live_freq_marked)
         self.live_widget.freq_selected.connect(self._on_live_graph_freq_clicked)
         self.live_widget.marks_cleared.connect(self._on_live_marks_cleared)
+        self.plot.fullscreen_toggled.connect(self._toggle_graph_fullscreen)
+        self.live_widget.fullscreen_toggled.connect(self._toggle_graph_fullscreen)
         self._spectrum_stack = QStackedWidget()
         self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
         self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
@@ -246,7 +252,9 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._spectrum_stack, 3)
 
         # Нижняя секция: таблица + управление
-        bottom_section = QHBoxLayout()
+        self._bottom_widget = QWidget()
+        bottom_section = QHBoxLayout(self._bottom_widget)
+        bottom_section.setContentsMargins(0, 0, 0, 0)
         bottom_section.setSpacing(10)
 
         # Таблица результатов
@@ -315,7 +323,7 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.btn_action)
 
         bottom_section.addWidget(control_group, 1)
-        main_layout.addLayout(bottom_section, 2)
+        main_layout.addWidget(self._bottom_widget, 2)
 
     # ------------------------------------------------------------------
     # Панель параметров
@@ -385,6 +393,7 @@ class MainWindow(QMainWindow):
 
         # Режим одной полосы SDR (только для live и preview)
         self.chk_single_bw = QCheckBox("Полоса SDR (2 МГц)")
+        self.chk_single_bw.setChecked(True)
         self.chk_single_bw.setToolTip(
             "Показывать только одну полосу пропускания SDR (~2 МГц)\n"
             "вместо полного диапазона. Значительно ускоряет обновление."
@@ -508,6 +517,20 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Успех", f"Спектр сохранён:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+
+    # ------------------------------------------------------------------
+    # Полноэкранный режим графика
+    # ------------------------------------------------------------------
+
+    def _toggle_graph_fullscreen(self, fullscreen: bool) -> None:
+        self._top_bar.setVisible(not fullscreen)
+        self._settings_panel.setVisible(not fullscreen)
+        self._bottom_widget.setVisible(not fullscreen)
+        # Синхронизируем кнопку в обоих виджетах без повторного эмита
+        for w in (self.plot, self.live_widget):
+            w.btn_fullscreen.blockSignals(True)
+            w.btn_fullscreen.setChecked(fullscreen)
+            w.btn_fullscreen.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Управление процессом
@@ -1169,6 +1192,7 @@ class MainWindow(QMainWindow):
         self.thread = None
         self._resetting = False
 
+        self._toggle_graph_fullscreen(False)
         self._stop_panorama_preview()   # также отключает хендлеры настроек
         self._bookmark_freqs_hz.clear()
         self.plot.clear()

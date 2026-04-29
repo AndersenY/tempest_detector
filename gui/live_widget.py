@@ -11,9 +11,10 @@ class LiveWidget(QWidget):
     Оформление соответствует SpectrumPlotWidget.
     """
 
-    freq_marked  = pyqtSignal(float)   # МГц, при добавлении метки
-    freq_selected = pyqtSignal(float)  # МГц, при клике вне режима меток
-    marks_cleared = pyqtSignal()       # все метки удалены пользователем
+    freq_marked        = pyqtSignal(float)   # МГц, при добавлении метки
+    freq_selected      = pyqtSignal(float)  # МГц, при клике вне режима меток
+    marks_cleared      = pyqtSignal()       # все метки удалены пользователем
+    fullscreen_toggled = pyqtSignal(bool)   # True = полный экран
 
     _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
     _EMA_ALPHA   = 0.35    # коэффициент EMA-сглаживания живого спектра
@@ -153,8 +154,21 @@ class LiveWidget(QWidget):
         # """)
         # self.btn_highlight.toggled.connect(self._on_highlight_toggle)
 
+        self.btn_fullscreen = QPushButton("⛶")
+        self.btn_fullscreen.setCheckable(True)
+        self.btn_fullscreen.setFixedSize(28, 28)
+        self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
+        self.btn_fullscreen.setStyleSheet("""
+            QPushButton { background-color: #555; color: #ccc; border: none;
+                          padding: 2px; border-radius: 3px; font-size: 14px; }
+            QPushButton:checked { background-color: #1A237E; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """)
+        self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
+
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
-                  self.btn_mark, self.btn_clear_marks, self.lbl_fps):
+                  self.btn_mark, self.btn_clear_marks, self.lbl_fps,
+                  self.btn_fullscreen):
             cp.addWidget(w)
 
         # ── Кнопки масштабирования (нижний правый угол) ───────────────

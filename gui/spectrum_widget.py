@@ -8,8 +8,9 @@ from typing import List
 class SpectrumPlotWidget(QWidget):
 
     _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
-    freq_clicked    = pyqtSignal(float)   # МГц, клик в обычном режиме
-    freq_mark_added = pyqtSignal(float)   # МГц, добавлена метка в режиме меток
+    freq_clicked      = pyqtSignal(float)   # МГц, клик в обычном режиме
+    freq_mark_added   = pyqtSignal(float)   # МГц, добавлена метка в режиме меток
+    fullscreen_toggled = pyqtSignal(bool)   # True = полный экран
 
     def __init__(self):
         super().__init__()
@@ -101,10 +102,23 @@ class SpectrumPlotWidget(QWidget):
         """)
         self.btn_highlight.toggled.connect(self._on_highlight_toggle)
 
+        self.btn_fullscreen = QPushButton("⛶")
+        self.btn_fullscreen.setCheckable(True)
+        self.btn_fullscreen.setFixedSize(28, 28)
+        self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
+        self.btn_fullscreen.setStyleSheet("""
+            QPushButton { background-color: #555; color: #ccc; border: none;
+                          padding: 2px; border-radius: 3px; font-size: 14px; }
+            QPushButton:checked { background-color: #1A237E; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """)
+        self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
+
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
         panel_layout.addWidget(self.btn_mark_mode)
         panel_layout.addWidget(self.btn_clear_marks)
+        panel_layout.addWidget(self.btn_fullscreen)
         # panel_layout.addWidget(self.btn_highlight)
 
         # Нижняя правая панель: зум + и -
