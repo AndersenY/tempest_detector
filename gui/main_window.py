@@ -965,15 +965,15 @@ class MainWindow(QMainWindow):
         if abs(nearest_hz - freq_hz) > threshold_hz:
             return
         target_mhz = nearest_hz / 1e6
+        self.live_widget.highlight_mark(target_mhz)
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             if item:
                 try:
                     if abs(float(item.text()) - target_mhz) < 0.01:
-                        # Без блокировки сигналов — _on_table_selection_changed
-                        # подсветит метку и центрирует вид автоматически
+                        self.table.blockSignals(True)
                         self.table.selectRow(row)
-                        self.table.scrollTo(self.table.model().index(row, 0))
+                        self.table.blockSignals(False)
                         break
                 except ValueError:
                     pass
@@ -1047,8 +1047,9 @@ class MainWindow(QMainWindow):
                 if item:
                     try:
                         if abs(float(item.text()) - target_mhz) < 0.01:
+                            self.table.blockSignals(True)
                             self.table.selectRow(row)
-                            self.table.scrollTo(self.table.model().index(row, 0))
+                            self.table.blockSignals(False)
                             break
                     except ValueError:
                         pass
@@ -1083,7 +1084,6 @@ class MainWindow(QMainWindow):
                         self.table.blockSignals(True)
                         self.table.selectRow(row)
                         self.table.blockSignals(False)
-                        self.table.scrollTo(self.table.model().index(row, 0))
                         break
                 except ValueError:
                     pass

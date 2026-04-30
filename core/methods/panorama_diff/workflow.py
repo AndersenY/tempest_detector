@@ -205,8 +205,12 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
         rbw = on_spec.rbw_hz
         tol = max(rbw * 3, 10_000)   # допуск: 3 RBW или минимум 10 кГц
         for freq_hz in self._preset_candidates_hz:
-            if any(abs(s.frequency_hz - freq_hz) < tol for s in self._signals):
-                continue   # уже найден автоматически
+            matched = next(
+                (s for s in self._signals if abs(s.frequency_hz - freq_hz) < tol), None
+            )
+            if matched is not None:
+                matched.detection_method = "bookmark"  # сохраняем метку пользователя
+                continue
             idx = int(np.argmin(np.abs(on_spec.frequencies_hz - freq_hz)))
             amp_on  = float(on_spec.amplitudes_db[idx])
             amp_off = float(off_spec.amplitudes_db[idx])
