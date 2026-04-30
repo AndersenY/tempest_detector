@@ -1,6 +1,5 @@
 import sys
 import csv
-import os
 import types
 import numpy as np
 import pyqtgraph as pg
@@ -9,7 +8,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
                              QProgressBar, QMessageBox, QGroupBox, QHeaderView,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
-                             QCheckBox, QFormLayout, QStackedWidget)
+                             QCheckBox, QStackedWidget)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.config import PanoramaConfig
@@ -246,6 +245,8 @@ class MainWindow(QMainWindow):
         self.plot.fullscreen_toggled.connect(self._toggle_graph_fullscreen)
         self.live_widget.fullscreen_toggled.connect(self._toggle_graph_fullscreen)
         self.live_widget.view_range_changed.connect(self._on_live_view_range_changed)
+        self.live_widget.stop_requested.connect(self._on_live_stop_requested)
+        self.live_widget.resume_requested.connect(self._on_live_resume_requested)
         self._spectrum_stack = QStackedWidget()
         self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
         self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
@@ -392,11 +393,20 @@ class MainWindow(QMainWindow):
         self.chk_maxhold.setChecked(self.cfg.use_max_hold)
         layout.addWidget(self.chk_maxhold)
 
+        # Фиксация полосы пропускания в live-режиме (только пан, зум запрещён)
+        self.chk_lock_bw = QCheckBox("Фиксировать полосу")
+        self.chk_lock_bw.setChecked(True)
+        self.chk_lock_bw.setToolTip(
+            "В live-режиме зафиксировать ширину полосы SDR.\n"
+            "Разрешён только пан. Предотвращает лаги."
+        )
+        layout.addWidget(self.chk_lock_bw)
+
         layout.addStretch(1)
 
         self._settings_widgets = [
             self.spin_start_freq, self.spin_stop_freq, self.spin_threshold,
-            self.spin_gain, self.spin_avg, self.chk_maxhold,
+            self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_lock_bw,
         ]
         return box
 
@@ -527,6 +537,28 @@ class MainWindow(QMainWindow):
     # Управление процессом
     # ------------------------------------------------------------------
 
+    def _on_live_stop_requested(self) -> None:
+        """Кнопка ■ на live_widget: в режиме live_preview — замораживаем граф
+        (не сбрасываем данные), в других режимах — полный сброс."""
+        if self.current_step == "live_preview":
+            self._stop_panorama_preview()
+            self.live_widget.set_live_running(False)
+            self.btn_action.setText("▶  ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
+            self.btn_action.setEnabled(True)
+            self.btn_stop.setEnabled(False)
+            self.lbl_instruction.setText(
+                "<b>⏸ Прямой эфир остановлен</b><br>"
+                "<span style='color:#aaa'>"
+                "График заморожен. Изучите спектр.<br>"
+                "Нажмите ▶ для возобновления, <b>▶ ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b> или <b>Сброс</b>.</span>"
+            )
+        else:
+            self._reset_to_start()
+
+    def _on_live_resume_requested(self) -> None:
+        """Кнопка ▶ на live_widget: перезапускает прямой эфир."""
+        self._start_panorama_preview()
+
     def _reset_to_start(self):
         """Прерывает текущий процесс и возвращает программу в начальное состояние."""
         self._resetting = True
@@ -603,14 +635,21 @@ class MainWindow(QMainWindow):
         cfg.fft_size        = 2048
         cfg.averaging_count = 1
         cfg.use_max_hold    = False
+        _LIVE_BW = 2_000_000
+        if self.chk_lock_bw.isChecked():
+            center = (cfg.start_freq_hz + cfg.stop_freq_hz) / 2
+            cfg.start_freq_hz = max(24e6,   center - _LIVE_BW / 2)
+            cfg.stop_freq_hz  = min(1750e6, center + _LIVE_BW / 2)
         bw_mhz = (cfg.stop_freq_hz - cfg.start_freq_hz) / 1e6
         self.live_widget.set_follow_mode(bw_mhz)
+        self.live_widget.set_span_lock(bw_mhz if self.chk_lock_bw.isChecked() else None)
         self._panorama_preview_worker.update_config(cfg)
-        # Немедленно обновляем X-диапазон и включаем Y-авторазмер
         vb = self.live_widget._pw.getPlotItem().getViewBox()
-        vb.setXRange(cfg.start_freq_hz / 1e6, cfg.stop_freq_hz / 1e6, padding=0.01)
+        self.live_widget._snap_in_progress = True
+        vb.setXRange(cfg.start_freq_hz / 1e6, cfg.stop_freq_hz / 1e6, padding=0)
+        self.live_widget._snap_in_progress = False
         vb.enableAutoRange(axis=pg.ViewBox.YAxis)
-        self.live_widget._x_initialized = True  # уже выставили, не сбрасывать на следующем кадре
+        self.live_widget._x_initialized = True
 
     def _sync_live_marks(self) -> None:
         """Синхронизирует метки на live_widget с _bookmark_freqs_hz."""
@@ -630,12 +669,16 @@ class MainWindow(QMainWindow):
         # Перестраиваем SDR на новый центр
         from copy import copy as _copy
         cfg = _copy(self.cfg)
-        # Добавляем 5% запас, чтобы данные всегда перекрывали видимый диапазон
-        # (компенсирует квантование центральной частоты и ширины полосы RTL-SDR)
-        span_hz = (stop_mhz - start_mhz) * 1e6
-        margin_hz = span_hz * 0.05
-        cfg.start_freq_hz   = max(24e6,    start_mhz * 1e6 - margin_hz)
-        cfg.stop_freq_hz    = min(1750e6,  stop_mhz  * 1e6 + margin_hz)
+        _LIVE_BW = 2_000_000
+        if self.chk_lock_bw.isChecked():
+            # Всегда 2 МГц по центру вида — гарантирует _capture_single, без sweep и лагов
+            center_hz = (start_mhz + stop_mhz) / 2 * 1e6
+            cfg.start_freq_hz = max(24e6,   center_hz - _LIVE_BW / 2)
+            cfg.stop_freq_hz  = min(1750e6, center_hz + _LIVE_BW / 2)
+        else:
+            span_hz = (stop_mhz - start_mhz) * 1e6
+            cfg.start_freq_hz = max(24e6,   start_mhz * 1e6 - span_hz * 0.05)
+            cfg.stop_freq_hz  = min(1750e6, stop_mhz  * 1e6 + span_hz * 0.05)
         cfg.sdr_gain_db     = self.spin_gain.value()
         cfg.fft_size        = 2048
         cfg.averaging_count = 1
@@ -699,6 +742,7 @@ class MainWindow(QMainWindow):
     def _start_panorama_preview(self) -> None:
         """Запускает live-просмотр на live_widget. Настройки остаются активными."""
         self.current_step = "live_preview"
+        self.live_widget.set_live_running(True)
         # Настройки НЕ блокируются — пользователь может менять их в реальном времени
         self.btn_action.setText("▶  ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
         self.btn_action.setEnabled(True)
@@ -720,8 +764,16 @@ class MainWindow(QMainWindow):
         prev_cfg.fft_size = 2048
         prev_cfg.averaging_count = 1
         prev_cfg.use_max_hold = False
+        # При включённой фиксации полосы — ограничиваем SDR hardware-bandwidth (2 МГц),
+        # чтобы всегда работал _capture_single без медленного sweep
+        _LIVE_BW = 2_000_000   # _USABLE_BW из RtlSdrBackend
+        if self.chk_lock_bw.isChecked():
+            center = (prev_cfg.start_freq_hz + prev_cfg.stop_freq_hz) / 2
+            prev_cfg.start_freq_hz = max(24e6,    center - _LIVE_BW / 2)
+            prev_cfg.stop_freq_hz  = min(1750e6,  center + _LIVE_BW / 2)
         bw_mhz = (prev_cfg.stop_freq_hz - prev_cfg.start_freq_hz) / 1e6
         self.live_widget.set_follow_mode(bw_mhz)
+        self.live_widget.set_span_lock(bw_mhz if self.chk_lock_bw.isChecked() else None)
 
         self._panorama_preview_worker = LiveWorker(self.ctrl, prev_cfg)
         Q = Qt.ConnectionType.QueuedConnection
@@ -762,6 +814,7 @@ class MainWindow(QMainWindow):
                 try: w.toggled.disconnect(self._on_preview_settings_changed)
                 except Exception: pass
         self.live_widget.set_follow_mode(None)
+        self.live_widget.set_span_lock(None)
         if self._panorama_preview_worker is not None:
             self._panorama_preview_worker.stop()
             self._panorama_preview_worker.wait(2000)
@@ -1117,7 +1170,7 @@ class MainWindow(QMainWindow):
             return
 
         on_a, off_a, diff_a = self._npz_to_spectra(data_a)
-        on_b, off_b, diff_b = self._npz_to_spectra(data_b)
+        on_b, _, diff_b = self._npz_to_spectra(data_b)
 
         self.plot.clear()
         self.table.setRowCount(0)

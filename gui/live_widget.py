@@ -11,11 +11,13 @@ class LiveWidget(QWidget):
     Оформление соответствует SpectrumPlotWidget.
     """
 
-    freq_marked        = pyqtSignal(float)        # МГц, при добавлении метки
-    freq_selected      = pyqtSignal(float)       # МГц, при клике вне режима меток
-    marks_cleared      = pyqtSignal()            # все метки удалены пользователем
-    fullscreen_toggled = pyqtSignal(bool)        # True = полный экран
+    freq_marked        = pyqtSignal(float)          # МГц, при добавлении метки
+    freq_selected      = pyqtSignal(float)         # МГц, при клике вне режима меток
+    marks_cleared      = pyqtSignal()              # все метки удалены пользователем
+    fullscreen_toggled = pyqtSignal(bool)          # True = полный экран
     view_range_changed = pyqtSignal(float, float)  # (start_mhz, stop_mhz) после дебаунса
+    stop_requested     = pyqtSignal()              # нажата кнопка ■ Стоп
+    resume_requested   = pyqtSignal()              # нажата кнопка ▶ Возобновить
 
     _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
     _EMA_ALPHA   = 0.35    # коэффициент EMA-сглаживания живого спектра
@@ -37,6 +39,7 @@ class LiveWidget(QWidget):
         self._last_highlight_mhz: float | None = None
         # Follow-режим: ретюнинг при пане/зуме
         self._follow_span_mhz: float | None = None
+        self._locked_span_mhz: float | None = None  # фиксация ширины полосы
         self._span_enforcing = False
         self._pending_range: tuple | None = None
         self._range_timer = QTimer()
@@ -180,9 +183,30 @@ class LiveWidget(QWidget):
         """)
         self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
 
+        self.btn_stop_live = QPushButton("■")
+        self.btn_stop_live.setFixedSize(28, 28)
+        self.btn_stop_live.setToolTip("Остановить прямой эфир")
+        self.btn_stop_live.setStyleSheet("""
+            QPushButton { background-color: #C62828; color: white; border: none;
+                          padding: 2px; border-radius: 3px; font-size: 12px; }
+            QPushButton:hover { background-color: #B71C1C; }
+        """)
+        self.btn_stop_live.clicked.connect(self.stop_requested)
+
+        self.btn_resume_live = QPushButton("▶")
+        self.btn_resume_live.setFixedSize(28, 28)
+        self.btn_resume_live.setToolTip("Возобновить прямой эфир")
+        self.btn_resume_live.setStyleSheet("""
+            QPushButton { background-color: #2E7D32; color: white; border: none;
+                          padding: 2px; border-radius: 3px; font-size: 12px; }
+            QPushButton:hover { background-color: #1B5E20; }
+        """)
+        self.btn_resume_live.clicked.connect(self.resume_requested)
+        self.btn_resume_live.setVisible(False)
+
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
                   self.btn_mark, self.btn_clear_marks, self.lbl_fps,
-                  self.btn_fullscreen):
+                  self.btn_fullscreen, self.btn_stop_live, self.btn_resume_live):
             cp.addWidget(w)
 
         # ── Кнопки масштабирования (нижний правый угол) ───────────────
@@ -434,18 +458,43 @@ class LiveWidget(QWidget):
     # Follow-режим: фиксированная полоса, ретюнинг при пане
     # ------------------------------------------------------------------
 
+    def set_live_running(self, running: bool) -> None:
+        """Переключить вид кнопок ■/▶ в зависимости от состояния потока."""
+        self.btn_stop_live.setVisible(running)
+        self.btn_resume_live.setVisible(not running)
+        self.control_panel.adjustSize()
+
     def set_follow_mode(self, span_mhz: float | None) -> None:
         """Включить/выключить follow-режим. span_mhz=None — выключить."""
         self._follow_span_mhz = span_mhz
 
+    def set_span_lock(self, span_mhz: float | None) -> None:
+        """Зафиксировать ширину полосы (только пан, зум запрещён). None — снять."""
+        self._locked_span_mhz = span_mhz
+        locked = span_mhz is not None
+        self.btn_zoom_in.setEnabled(not locked)
+        self.btn_zoom_out.setEnabled(not locked)
+        tip = "Масштабирование недоступно при зафиксированной полосе SDR" if locked else ""
+        self.btn_zoom_in.setToolTip(tip)
+        self.btn_zoom_out.setToolTip(tip)
+
     def _on_x_range_changed(self, vb, range_) -> None:
-        # Не реагировать до первых данных и во время программного snap
         if self._follow_span_mhz is None or not self._x_initialized or self._snap_in_progress:
             return
         x0, x1 = float(range_[0]), float(range_[1])
-        # Любое изменение вида (пан или зум) — планируем ретюнинг с дебаунсом 300 мс
+
+        # Фиксация полосы: если ширина изменилась — восстанавливаем, меняем только центр
+        if (self._locked_span_mhz is not None and
+                abs((x1 - x0) - self._locked_span_mhz) > 0.01):
+            cx = (x0 + x1) / 2
+            half = self._locked_span_mhz / 2
+            x0, x1 = cx - half, cx + half
+            self._snap_in_progress = True
+            vb.setXRange(x0, x1, padding=0)
+            self._snap_in_progress = False
+
         self._pending_range = (x0, x1)
-        self._range_timer.start(300)
+        self._range_timer.start(100)
 
     def _emit_pending_range(self) -> None:
         if self._pending_range is not None:
