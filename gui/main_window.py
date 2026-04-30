@@ -17,6 +17,7 @@ from core.models import Spectrum, PEMINSignal
 from core.methods import PanoramaDiffWorkflow, HarmonicSearchWorkflow
 from core.audio_monitor import AudioMonitor
 from core.zero_span import ZeroSpanWorker
+from core.remote_control_server import RemoteControlServer
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 from gui.expert_panel import ExpertPanel
 from gui.zero_span_widget import ZeroSpanWidget
@@ -54,6 +55,8 @@ class Worker(QThread):
 
 
 class MainWindow(QMainWindow):
+    _remote_count_signal = pyqtSignal(int)   # потокобезопасное обновление UI
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ПЭМИН Детектор (RTL-SDR)")
@@ -85,8 +88,14 @@ class MainWindow(QMainWindow):
 
         self.scan_mode = "full"   # "full"|"quick"|"harmonic"|"simulator"|"demo"
 
+        self._remote_server = RemoteControlServer()
+        self._remote_server.on_client_count_changed = self._on_remote_client_count
+        self._remote_count_signal.connect(self._update_remote_status)
+        self._remote_server.start()
+
         self._init_ui()
         self._setup_menu_bar()
+        self._update_remote_status(0)
 
     def _setup_menu_bar(self):
         mb = self.menuBar()
@@ -311,6 +320,55 @@ class MainWindow(QMainWindow):
         self.expert_panel.zero_span_started.connect(self._on_zero_span_start)
         self.expert_panel.zero_span_stopped.connect(self._on_zero_span_stop)
         control_layout.addWidget(self.expert_panel)
+
+        # ── Панель удалённого управления ──────────────────────────────
+        remote_box = QGroupBox("Удалённое управление")
+        remote_box.setStyleSheet("""
+            QGroupBox { font-weight: bold; border: 1px solid #444; border-radius: 4px;
+                        margin-top: 8px; padding-top: 6px; color: #90CAF9; font-size: 11px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
+            QLabel { color: #ccc; font-size: 11px; }
+            QSpinBox { background:#333; color:#e0e0e0; border:1px solid #555;
+                       border-radius:3px; padding:1px 3px; }
+        """)
+        remote_inner = QVBoxLayout(remote_box)
+        remote_inner.setSpacing(4)
+        remote_inner.setContentsMargins(8, 4, 8, 6)
+
+        addr_row = QHBoxLayout()
+        addr_row.addWidget(QLabel("Адрес сервера:"))
+        self._lbl_remote_addr = QLabel(self._remote_server.local_address)
+        self._lbl_remote_addr.setStyleSheet("color:#90CAF9; font-family:monospace;")
+        addr_row.addWidget(self._lbl_remote_addr)
+        addr_row.addStretch()
+        remote_inner.addLayout(addr_row)
+
+        status_row = QHBoxLayout()
+        self._lbl_remote_clients = QLabel("● Нет подключений")
+        self._lbl_remote_clients.setStyleSheet("color:#888;")
+        status_row.addWidget(self._lbl_remote_clients)
+        status_row.addStretch()
+        settle_lbl = QLabel("Буфер:")
+        settle_lbl.setToolTip(
+            "Пауза после команды ON/OFF перед захватом спектра.\n"
+            "Позволяет сетевому трафику затихнуть до начала измерения."
+        )
+        status_row.addWidget(settle_lbl)
+        self._spin_settle = QSpinBox()
+        self._spin_settle.setRange(100, 5000)
+        self._spin_settle.setValue(500)
+        self._spin_settle.setSuffix(" мс")
+        self._spin_settle.setToolTip(
+            "Рекомендуется ≥500 мс при Ethernet, ≥1000 мс при WiFi."
+        )
+        self._spin_settle.setStyleSheet("""
+            QSpinBox { background:#333; color:#e0e0e0; border:1px solid #555;
+                       border-radius:3px; padding:1px 3px; min-width:75px; }
+        """)
+        status_row.addWidget(self._spin_settle)
+        remote_inner.addLayout(status_row)
+        control_layout.addWidget(remote_box)
+        # ──────────────────────────────────────────────────────────────
 
         control_layout.addStretch(1)
 
@@ -872,6 +930,10 @@ class MainWindow(QMainWindow):
         self._refresh_bookmark_table()
 
         self.wf = self._make_workflow()
+        # Подключаем авто-управление если есть хоть один клиент
+        if self._remote_server.client_count > 0 or isinstance(self.ctrl, DemoSimulator):
+            self.wf.auto_settle_s = self._spin_settle.value() / 1000.0
+        self.wf.on_test_activate = self._on_test_activate
         self.thread = Worker(self.wf)
 
         Q = Qt.ConnectionType.QueuedConnection
@@ -1346,6 +1408,37 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background-color: #1976D2; }
         """)
         self.expert_panel.enable_remeasure(True)
+
+    # ------------------------------------------------------------------
+    # Удалённое управление тестовым клиентом
+    # ------------------------------------------------------------------
+
+    def _on_remote_client_count(self, count: int) -> None:
+        # Вызывается из фонового потока — emit через signal безопасен
+        self._remote_count_signal.emit(count)
+
+    def _update_remote_status(self, count: int) -> None:
+        self._lbl_remote_addr.setText(self._remote_server.local_address)
+        if count == 0:
+            self._lbl_remote_clients.setText("● Нет подключений")
+            self._lbl_remote_clients.setStyleSheet("color:#888;")
+        else:
+            noun = "клиент" if count == 1 else ("клиента" if count < 5 else "клиентов")
+            self._lbl_remote_clients.setText(f"● {count} {noun}")
+            self._lbl_remote_clients.setStyleSheet("color:#66BB6A;")
+
+    def _on_test_activate(self, active: bool) -> None:
+        """Вызывается из рабочего потока workflow при авто-переходе."""
+        if isinstance(self.ctrl, DemoSimulator):
+            self.ctrl.test_active = active
+        if active:
+            self._remote_server.send_test_start()
+        else:
+            self._remote_server.send_test_stop()
+
+    def closeEvent(self, event) -> None:
+        self._remote_server.stop()
+        super().closeEvent(event)
 
     def _plot_data(self, on, off, diff):
         self._last_on = on

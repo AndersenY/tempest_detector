@@ -17,6 +17,12 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
     preset_candidates_hz — список частот (Гц), помеченных пользователем в live-режиме.
     Они добавляются в список кандидатов после автоматического detect() и проходят
     ту же верификацию В1/В2 что и автоматически найденные сигналы.
+
+    Удалённое управление:
+      Если auto_settle_s > 0 — workflow переходит между фазами автоматически:
+        on_test_activate(True)  → пауза auto_settle_s с → фаза ON
+        on_test_activate(False) → пауза auto_settle_s с → фаза OFF
+      Если auto_settle_s == 0 — ручной режим: ждёт подтверждения пользователя.
     """
 
     def __init__(self, ctrl: BaseInstrument, cfg: PanoramaConfig,
@@ -30,12 +36,18 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
         self._pause_event = threading.Event()
         self._stop_flag = False
 
+        # Буферное время (с) после команды ON/OFF до начала захвата.
+        # 0.0 = ручной режим (ждать клика пользователя).
+        self.auto_settle_s: float = 0.0
+
         self.on_status = lambda s: None
         self.on_progress = lambda p: None
         self.on_data = lambda a, b, c: None
         self.on_user_action_needed = lambda title, desc, btn: None
         self.on_signal_updated = lambda: None
         self.on_off_spectrum = lambda spec: None   # вызывается сразу после захвата фона
+        # Вызывается при автопереключении: True = включить тест, False = выключить.
+        self.on_test_activate: Callable[[bool], None] = lambda active: None
 
     @property
     def signals(self) -> List[PEMINSignal]:
@@ -50,6 +62,44 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
                 raise InterruptedError("Process stopped by user")
         if self._stop_flag:
             raise InterruptedError("Process stopped by user")
+
+    def _transition(self, activate: bool | None,
+                    title: str, desc: str, btn: str) -> None:
+        """
+        Переход между фазами ON/OFF.
+        auto_settle_s > 0: отправить команду и выдержать паузу (авто).
+        auto_settle_s == 0: показать диалог и ждать пользователя (ручной).
+        """
+        if self.auto_settle_s > 0.0:
+            if activate is not None:
+                label = "ВКЛ" if activate else "ВЫКЛ"
+                self.on_status(
+                    f"[Авто] Команда {label} отправлена — "
+                    f"буфер {self.auto_settle_s:.1f} с..."
+                )
+                self.on_test_activate(activate)
+                # Ждём settle, но проверяем stop_flag каждые 100 мс
+                deadline = time.monotonic() + self.auto_settle_s
+                while time.monotonic() < deadline:
+                    if self._stop_flag:
+                        raise InterruptedError("Process stopped by user")
+                    time.sleep(0.1)
+            else:
+                # Промежуточный авто-переход: показать результаты, подождать 2 с
+                self.on_signal_updated()   # обновить таблицу обнаруженных сигналов
+                self.on_user_action_needed(
+                    title,
+                    desc + "\n[Авто-режим: продолжение через 2 с]",
+                    btn,
+                )
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    if self._stop_flag:
+                        raise InterruptedError("Process stopped by user")
+                    time.sleep(0.1)
+        else:
+            self.on_user_action_needed(title, desc, btn)
+            self._wait_for_user()
 
     def resume(self):
         self._pause_event.set()
@@ -72,12 +122,12 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
             self.on_off_spectrum(off_spec)   # сразу показываем фон на графике
             self.on_progress(25)
 
-            self.on_user_action_needed(
-                "ФОН ИЗМЕРЕН",
-                "1. Включите тестовый сигнал.\n2. Нажмите кнопку ниже.",
-                "ИЗМЕРИТЬ СИГНАЛ (ТЕСТ ВКЛ)"
+            self._transition(
+                activate=True,
+                title="ФОН ИЗМЕРЕН",
+                desc="1. Включите тестовый сигнал.\n2. Нажмите кнопку ниже.",
+                btn="ИЗМЕРИТЬ СИГНАЛ (ТЕСТ ВКЛ)",
             )
-            self._wait_for_user()
 
             # --- ЭТАП 2: СИГНАЛ (ON) И ПОИСК ---
             self.on_status("ЭТАП 2: ПОИСК СИГНАЛОВ ПЭМИН")
@@ -108,12 +158,12 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
                 )
                 return
 
-            self.on_user_action_needed(
-                msg,
-                "Убедитесь, что тест ВСЕ ЕЩЕ ВКЛЮЧЕН.\nНажмите для Верификации 1.",
-                "ЗАПУСТИТЬ ВЕРИФИКАЦИЮ 1"
+            self._transition(
+                activate=None,
+                title=msg,
+                desc="Убедитесь, что тест ВСЕ ЕЩЕ ВКЛЮЧЕН.\nНажмите для Верификации 1.",
+                btn="ЗАПУСТИТЬ ВЕРИФИКАЦИЮ 1",
             )
-            self._wait_for_user()
 
             # --- ЭТАП 3: ВЕРИФИКАЦИЯ 1 (ON Stability) ---
             self.on_status("ЭТАП 3: ВЕРИФИКАЦИЯ 1 (Стабильность ВКЛ)")
@@ -144,12 +194,12 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
 
                     self.on_progress(70 + int(((i + 1) / total) * 15))
 
-            self.on_user_action_needed(
-                "ВЕРИФИКАЦИЯ 1 ЗАВЕРШЕНА",
-                "1. ВЫКЛЮЧИТЕ тестовый сигнал.\n2. Нажмите кнопку для Верификации 2.",
-                "ЗАПУСТИТЬ ВЕРИФИКАЦИЮ 2 (ТЕСТ ВЫКЛ)"
+            self._transition(
+                activate=False,
+                title="ВЕРИФИКАЦИЯ 1 ЗАВЕРШЕНА",
+                desc="1. ВЫКЛЮЧИТЕ тестовый сигнал.\n2. Нажмите кнопку для Верификации 2.",
+                btn="ЗАПУСТИТЬ ВЕРИФИКАЦИЮ 2 (ТЕСТ ВЫКЛ)",
             )
-            self._wait_for_user()
 
             # --- ЭТАП 4: ВЕРИФИКАЦИЯ 2 (OFF Cleanliness) ---
             self.on_status("ЭТАП 4: ВЕРИФИКАЦИЯ 2 (Чистота ВЫКЛ)")
