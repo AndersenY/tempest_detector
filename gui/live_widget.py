@@ -104,7 +104,6 @@ class LiveWidget(QWidget):
         vb = pi.getViewBox()
         vb.setMouseMode(pg.ViewBox.PanMode)
         vb.sigXRangeChanged.connect(self._on_x_range_changed)
-        pi.setAutoVisible(y=True)
 
         self.legend = pi.addLegend(offset=(10, 10))
         if self.legend:
@@ -278,6 +277,9 @@ class LiveWidget(QWidget):
             vb = self._pw.getPlotItem().getViewBox()
             self._snap_in_progress = True
             vb.setXRange(data_min, data_max, padding=0)
+            y_center = float(np.mean(amps_db))
+            y_span   = max(float(amps_db.max() - amps_db.min()) * 1.4, 40.0)
+            vb.setYRange(y_center - y_span / 2, y_center + y_span / 2, padding=0)
             self._snap_in_progress = False
             self._x_initialized = True
         self._last_data_min = data_min
@@ -306,15 +308,16 @@ class LiveWidget(QWidget):
         if self._show_peak:
             curves.append(self._peak_curve)
 
-        all_y = []
+        all_y_arrays = []
         for curve in curves:
             yd = curve.getData()[1]
             if yd is not None and len(yd) > 0:
-                all_y.append(float(yd.min()))
-                all_y.append(float(yd.max()))
-        if all_y:
-            half_span = max(abs(min(all_y)), abs(max(all_y))) * 1.1
-            vb.setYRange(-half_span, half_span, padding=0)
+                all_y_arrays.append(yd)
+        if all_y_arrays:
+            combined = np.concatenate(all_y_arrays)
+            y_center = float(np.mean(combined))
+            y_span   = max(float(combined.max() - combined.min()) * 1.4, 40.0)
+            vb.setYRange(y_center - y_span / 2, y_center + y_span / 2, padding=0)
         else:
             vb.enableAutoRange(axis=pg.ViewBox.YAxis)
 
