@@ -111,14 +111,14 @@ class LiveWidget(QWidget):
 
         self._live_curve = pi.plot(
             [], [],
-            pen=pg.mkPen("#39FF14", width=1.5),
+            pen=pg.mkPen("#39FF14", width=0.8),
             name="Live",
             fillLevel=self._FILL_LEVEL_DB,
             fillBrush=pg.mkBrush(57, 255, 20, 22),
         )
         self._peak_curve = pi.plot(
             [], [],
-            pen=pg.mkPen("#FF8C00", width=1, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen("#FF8C00", width=0.8, style=Qt.PenStyle.DashLine),
             name="Peak Hold",
         )
         self._peak_curve.setVisible(self._show_peak)

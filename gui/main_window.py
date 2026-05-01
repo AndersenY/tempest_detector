@@ -771,17 +771,35 @@ class MainWindow(QMainWindow):
             return
         from copy import copy as _copy
         cfg = _copy(self.cfg)
-        cfg.start_freq_hz   = start_hz
-        cfg.stop_freq_hz    = stop_hz
+        cfg.start_freq_hz = start_hz
+        cfg.stop_freq_hz  = stop_hz
         cfg.sdr_gain_db     = self.spin_gain.value()
         cfg.fft_size        = 8192
         cfg.averaging_count = 1
         cfg.use_max_hold    = False
         _LIVE_BW = 2_000_000
         if self.chk_lock_bw.isChecked():
-            center = (cfg.start_freq_hz + cfg.stop_freq_hz) / 2
-            cfg.start_freq_hz = max(24e6,   center - _LIVE_BW / 2)
-            cfg.stop_freq_hz  = min(1750e6, center + _LIVE_BW / 2)
+            sender = self.sender()
+            if sender is self.spin_start_freq:
+                # пользователь изменил начало — сохраняем полосу, двигаем конец
+                cfg.stop_freq_hz  = min(1750e6, cfg.start_freq_hz + _LIVE_BW)
+                cfg.start_freq_hz = cfg.stop_freq_hz - _LIVE_BW
+            elif sender is self.spin_stop_freq:
+                # пользователь изменил конец — сохраняем полосу, двигаем начало
+                cfg.start_freq_hz = max(24e6, cfg.stop_freq_hz - _LIVE_BW)
+                cfg.stop_freq_hz  = cfg.start_freq_hz + _LIVE_BW
+            else:
+                # галка или другой виджет — центрируем окно 2 МГц
+                center = (cfg.start_freq_hz + cfg.stop_freq_hz) / 2
+                cfg.start_freq_hz = max(24e6,   center - _LIVE_BW / 2)
+                cfg.stop_freq_hz  = min(1750e6, center + _LIVE_BW / 2)
+            # синхронизируем спиннеры с реальным диапазоном SDR
+            self.spin_start_freq.blockSignals(True)
+            self.spin_stop_freq.blockSignals(True)
+            self.spin_start_freq.setValue(cfg.start_freq_hz / 1e6)
+            self.spin_stop_freq.setValue(cfg.stop_freq_hz / 1e6)
+            self.spin_start_freq.blockSignals(False)
+            self.spin_stop_freq.blockSignals(False)
         bw_mhz = (cfg.stop_freq_hz - cfg.start_freq_hz) / 1e6
         self.live_widget.set_follow_mode(bw_mhz)
         self.live_widget.set_span_lock(bw_mhz if self.chk_lock_bw.isChecked() else None)
@@ -790,7 +808,6 @@ class MainWindow(QMainWindow):
         self.live_widget._snap_in_progress = True
         vb.setXRange(cfg.start_freq_hz / 1e6, cfg.stop_freq_hz / 1e6, padding=0)
         self.live_widget._snap_in_progress = False
-        vb.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.live_widget._x_initialized = True
 
     def _sync_live_marks(self) -> None:
@@ -801,26 +818,30 @@ class MainWindow(QMainWindow):
         """Оператор сдвинул live-вид — ретюним SDR и обновляем спиннеры."""
         if self.current_step != "live_preview" or self._panorama_preview_worker is None:
             return
-        # Обновляем спиннеры без срабатывания _on_preview_settings_changed
-        self.spin_start_freq.blockSignals(True)
-        self.spin_stop_freq.blockSignals(True)
-        self.spin_start_freq.setValue(start_mhz)
-        self.spin_stop_freq.setValue(stop_mhz)
-        self.spin_start_freq.blockSignals(False)
-        self.spin_stop_freq.blockSignals(False)
-        # Перестраиваем SDR на новый центр
         from copy import copy as _copy
         cfg = _copy(self.cfg)
         _LIVE_BW = 2_000_000
         if self.chk_lock_bw.isChecked():
-            # Всегда 2 МГц по центру вида — гарантирует _capture_single, без sweep и лагов
+            # Всегда 2 МГц по центру вида — без sweep и лагов
             center_hz = (start_mhz + stop_mhz) / 2 * 1e6
             cfg.start_freq_hz = max(24e6,   center_hz - _LIVE_BW / 2)
             cfg.stop_freq_hz  = min(1750e6, center_hz + _LIVE_BW / 2)
+            # Спиннеры показывают реальный диапазон SDR, а не диапазон вида
+            spin_start = cfg.start_freq_hz / 1e6
+            spin_stop  = cfg.stop_freq_hz  / 1e6
         else:
             span_hz = (stop_mhz - start_mhz) * 1e6
             cfg.start_freq_hz = max(24e6,   start_mhz * 1e6 - span_hz * 0.05)
             cfg.stop_freq_hz  = min(1750e6, stop_mhz  * 1e6 + span_hz * 0.05)
+            spin_start = start_mhz
+            spin_stop  = stop_mhz
+        # Обновляем спиннеры без срабатывания _on_preview_settings_changed
+        self.spin_start_freq.blockSignals(True)
+        self.spin_stop_freq.blockSignals(True)
+        self.spin_start_freq.setValue(spin_start)
+        self.spin_stop_freq.setValue(spin_stop)
+        self.spin_start_freq.blockSignals(False)
+        self.spin_stop_freq.blockSignals(False)
         cfg.sdr_gain_db     = self.spin_gain.value()
         cfg.fft_size        = 8192
         cfg.averaging_count = 1
