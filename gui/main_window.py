@@ -774,7 +774,7 @@ class MainWindow(QMainWindow):
         cfg.start_freq_hz   = start_hz
         cfg.stop_freq_hz    = stop_hz
         cfg.sdr_gain_db     = self.spin_gain.value()
-        cfg.fft_size        = 2048
+        cfg.fft_size        = 8192
         cfg.averaging_count = 1
         cfg.use_max_hold    = False
         _LIVE_BW = 2_000_000
@@ -822,7 +822,7 @@ class MainWindow(QMainWindow):
             cfg.start_freq_hz = max(24e6,   start_mhz * 1e6 - span_hz * 0.05)
             cfg.stop_freq_hz  = min(1750e6, stop_mhz  * 1e6 + span_hz * 0.05)
         cfg.sdr_gain_db     = self.spin_gain.value()
-        cfg.fft_size        = 2048
+        cfg.fft_size        = 8192
         cfg.averaging_count = 1
         cfg.use_max_hold    = False
         self._panorama_preview_worker.update_config(cfg)
@@ -903,7 +903,7 @@ class MainWindow(QMainWindow):
 
         from copy import copy as _cp
         prev_cfg = _cp(self.cfg)
-        prev_cfg.fft_size = 2048
+        prev_cfg.fft_size = 8192
         prev_cfg.averaging_count = 1
         prev_cfg.use_max_hold = False
         # При включённой фиксации полосы — ограничиваем SDR hardware-bandwidth (2 МГц),

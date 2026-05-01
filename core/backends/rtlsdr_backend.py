@@ -109,7 +109,9 @@ class RtlSdrBackend(BaseInstrument):
             if len(raw) < cfg.fft_size:
                 # RTL-SDR вернул неполный буфер; остальные итерации тоже не помогут
                 break
-            fft_vals = np.fft.fftshift(np.fft.fft(np.array(raw) * window))
+            raw_arr = np.array(raw)
+            raw_arr -= raw_arr.mean()   # DC-block: убираем LO-утечку RTL-SDR
+            fft_vals = np.fft.fftshift(np.fft.fft(raw_arr * window))
             power = np.abs(fft_vals) ** 2
             avg_power += power
             np.maximum(max_power, power, out=max_power)

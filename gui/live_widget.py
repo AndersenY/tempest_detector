@@ -12,25 +12,34 @@ class LiveWidget(QWidget):
     """
 
     freq_marked        = pyqtSignal(float)          # МГц, при добавлении метки
-    freq_selected      = pyqtSignal(float)         # МГц, при клике вне режима меток
-    marks_cleared      = pyqtSignal()              # все метки удалены пользователем
-    fullscreen_toggled = pyqtSignal(bool)          # True = полный экран
-    view_range_changed = pyqtSignal(float, float)  # (start_mhz, stop_mhz) после дебаунса
-    stop_requested     = pyqtSignal()              # нажата кнопка ■ Стоп
-    resume_requested   = pyqtSignal()              # нажата кнопка ▶ Возобновить
+    freq_selected      = pyqtSignal(float)          # МГц, при клике вне режима меток
+    marks_cleared      = pyqtSignal()               # все метки удалены пользователем
+    fullscreen_toggled = pyqtSignal(bool)           # True = полный экран
+    view_range_changed = pyqtSignal(float, float)   # (start_mhz, stop_mhz) после дебаунса
+    stop_requested     = pyqtSignal()               # нажата кнопка ■ Стоп
+    resume_requested   = pyqtSignal()               # нажата кнопка ▶ Возобновить
 
-    _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
-    _EMA_ALPHA   = 0.35    # коэффициент EMA-сглаживания живого спектра
-    _ZOOM_FACTOR = 0.7
+    # ── Пороги и параметры ────────────────────────────────────────────────
+    _MIN_MARK_SPACING_MHZ    = 0.1    # дедупликация меток: ближе этого не добавляем
+    _HIGHLIGHT_MATCH_MHZ     = 0.1    # совпадение при подсветке (≥ порога дедупа)
+    _RETUNE_THRESHOLD_MHZ    = 0.05   # сдвиг данных, при котором считаем смену диапазона
+    _SPAN_LOCK_TOLERANCE_MHZ = 0.01   # допуск восстановления зафиксированной полосы
+    _RANGE_DEBOUNCE_MS       = 100    # дебаунс сигнала view_range_changed, мс
+    _EMA_ALPHA               = 0.30   # коэффициент EMA-сглаживания живого спектра
+    _ZOOM_FACTOR             = 0.7
+    _FILL_LEVEL_DB           = -300   # уровень заливки под кривой Live
+    _LABEL_MARK_POS          = 0.88   # позиция подписи метки по оси Y (0..1)
+    _LABEL_HL_POS            = 0.95   # позиция подписи линии подсветки
 
     def __init__(self) -> None:
         super().__init__()
         self._peak_hold:      np.ndarray | None = None
         self._ema_spectrum:   np.ndarray | None = None
+        self._ema_buf:        np.ndarray | None = None   # буфер для in-place EMA
         self._show_peak     = True
         self._mark_mode     = False
         self._x_initialized = False
-        self._last_time     = time.time()
+        self._last_time     = time.perf_counter()
         self._frame_count   = 0
         self._marked_lines: list = []
         self.marked_freqs_mhz: list[float] = []
@@ -39,13 +48,13 @@ class LiveWidget(QWidget):
         self._last_highlight_mhz: float | None = None
         # Follow-режим: ретюнинг при пане/зуме
         self._follow_span_mhz: float | None = None
-        self._locked_span_mhz: float | None = None  # фиксация ширины полосы
+        self._locked_span_mhz: float | None = None
         self._span_enforcing = False
         self._pending_range: tuple | None = None
         self._range_timer = QTimer()
-        self._last_data_min = 0.0   # частота первого бина последнего кадра (МГц)
+        self._last_data_min = 0.0
         self._last_data_max = 0.0
-        self._snap_in_progress = False  # блокировка ретюна при программном snap
+        self._snap_in_progress = False
         self._range_timer.setSingleShot(True)
         self._range_timer.timeout.connect(self._emit_pending_range)
         self._setup_ui()
@@ -58,7 +67,21 @@ class LiveWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._build_plot_widget()
+        self._build_control_panel()
+        self._build_zoom_panel()
         layout.addWidget(self._pw)
+
+    @staticmethod
+    def _make_button_style(checked_bg: str | None = None) -> str:
+        color = "#aaa" if checked_bg else "white"
+        style = (
+            f"QPushButton {{ background-color: #555; color: {color}; border: none;"
+            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
+            f" QPushButton:hover {{ background-color: #777; }}"
+        )
+        if checked_bg:
+            style += f" QPushButton:checked {{ background-color: {checked_bg}; color: white; }}"
+        return style
 
     def _build_plot_widget(self) -> None:
         self._pw = pg.PlotWidget()
@@ -81,7 +104,6 @@ class LiveWidget(QWidget):
         vb = pi.getViewBox()
         vb.setMouseMode(pg.ViewBox.PanMode)
         vb.sigXRangeChanged.connect(self._on_x_range_changed)
-        # Исключить fillLevel=-300 из расчёта авторазмера по Y
         pi.setAutoVisible(y=True)
 
         self.legend = pi.addLegend(offset=(10, 10))
@@ -92,7 +114,7 @@ class LiveWidget(QWidget):
             [], [],
             pen=pg.mkPen("#39FF14", width=1.5),
             name="Live",
-            fillLevel=-300,
+            fillLevel=self._FILL_LEVEL_DB,
             fillBrush=pg.mkBrush(57, 255, 20, 22),
         )
         self._peak_curve = pi.plot(
@@ -104,25 +126,7 @@ class LiveWidget(QWidget):
 
         self._pw.scene().sigMouseClicked.connect(self._on_plot_click)
 
-        _btn = """
-            QPushButton { background-color: #555; color: white; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:hover { background-color: #777; }
-        """
-        _btn_check = """
-            QPushButton { background-color: #555; color: #aaa; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:checked { background-color: #E65100; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """
-        _btn_peak_style = """
-            QPushButton { background-color: #555; color: #aaa; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:checked { background-color: #2E7D32; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """
-
-        # ── Панель управления (верхний правый угол) ────────────────────
+    def _build_control_panel(self) -> None:
         self.control_panel = QWidget(self._pw)
         self.control_panel.setStyleSheet(
             "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
@@ -132,75 +136,60 @@ class LiveWidget(QWidget):
         cp.setSpacing(5)
 
         self.btn_auto_scale = QPushButton("⟲ Сброс")
-        self.btn_auto_scale.setStyleSheet(_btn)
+        self.btn_auto_scale.setStyleSheet(self._make_button_style())
         self.btn_auto_scale.setToolTip("Сбросить масштаб")
         self.btn_auto_scale.clicked.connect(self.reset_view)
 
         self.btn_peak = QPushButton("Peak Hold")
         self.btn_peak.setCheckable(True)
         self.btn_peak.setChecked(True)
-        self.btn_peak.setStyleSheet(_btn_peak_style)
+        self.btn_peak.setStyleSheet(self._make_button_style("#2E7D32"))
         self.btn_peak.toggled.connect(self._on_peak_toggle)
 
         self.btn_reset_peak = QPushButton("⟲ Peak")
-        self.btn_reset_peak.setStyleSheet(_btn)
-        self.btn_reset_peak.clicked.connect(self.reset_peak)
+        self.btn_reset_peak.setStyleSheet(self._make_button_style())
+        self.btn_reset_peak.clicked.connect(self.clear_peak)
 
         self.btn_mark = QPushButton("📌 Метка")
         self.btn_mark.setCheckable(True)
-        self.btn_mark.setStyleSheet(_btn_check)
+        self.btn_mark.setStyleSheet(self._make_button_style("#E65100"))
         self.btn_mark.setToolTip("Режим меток: кликните на спектр для отметки частоты")
 
         self.btn_clear_marks = QPushButton("✕ Метки")
-        self.btn_clear_marks.setStyleSheet(_btn)
+        self.btn_clear_marks.setStyleSheet(self._make_button_style())
         self.btn_clear_marks.setToolTip("Удалить все метки")
         self.btn_clear_marks.clicked.connect(self._on_clear_marks_clicked)
 
         self.lbl_fps = QLabel("—")
         self.lbl_fps.setStyleSheet("color: #666; font-size: 11px; min-width: 45px;")
 
-        # self.btn_highlight = QPushButton("⊙ Маркер")
-        # self.btn_highlight.setCheckable(True)
-        # self.btn_highlight.setChecked(True)
-        # self.btn_highlight.setToolTip("Показывать/скрывать выделение выбранной частоты")
-        # self.btn_highlight.setStyleSheet("""
-        #     QPushButton { background-color: #555; color: #aaa; border: none;
-        #                   padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-        #     QPushButton:checked { background-color: #1565C0; color: white; }
-        #     QPushButton:hover { background-color: #777; }
-        # """)
-        # self.btn_highlight.toggled.connect(self._on_highlight_toggle)
-
         self.btn_fullscreen = QPushButton("⛶")
         self.btn_fullscreen.setCheckable(True)
         self.btn_fullscreen.setFixedSize(28, 28)
         self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
-        self.btn_fullscreen.setStyleSheet("""
-            QPushButton { background-color: #555; color: #ccc; border: none;
-                          padding: 2px; border-radius: 3px; font-size: 14px; }
-            QPushButton:checked { background-color: #2E7D32; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """)
+        self.btn_fullscreen.setStyleSheet(self._make_button_style("#2E7D32").replace(
+            "padding: 4px 8px", "padding: 2px"
+        ) + " font-size: 14px;")
         self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
 
         self.btn_stop_live = QPushButton("■")
         self.btn_stop_live.setFixedSize(28, 28)
         self.btn_stop_live.setToolTip("Остановить прямой эфир")
-        self.btn_stop_live.setStyleSheet("""
-            QPushButton { background-color: #C62828; color: white; border: none;
-                          padding: 2px; border-radius: 3px; font-size: 12px; }
-            QPushButton:hover { background-color: #B71C1C; }
-        """)
+        self.btn_stop_live.setStyleSheet(
+            "QPushButton { background-color: #C62828; color: white; border: none;"
+            " padding: 2px; border-radius: 3px; font-size: 12px; }"
+            " QPushButton:hover { background-color: #B71C1C; }"
+        )
         self.btn_stop_live.clicked.connect(self.stop_requested)
 
         self.btn_resume_live = QPushButton("▶")
         self.btn_resume_live.setFixedSize(28, 28)
         self.btn_resume_live.setToolTip("Возобновить прямой эфир")
-        self.btn_resume_live.setStyleSheet("""
-            QPushButton { background-color: #2E7D32; color: white; border: none;
-                          padding: 2px; border-radius: 3px; font-size: 12px; }
-            QPushButton:hover { background-color: #1B5E20; }
-        """)
+        self.btn_resume_live.setStyleSheet(
+            "QPushButton { background-color: #2E7D32; color: white; border: none;"
+            " padding: 2px; border-radius: 3px; font-size: 12px; }"
+            " QPushButton:hover { background-color: #1B5E20; }"
+        )
         self.btn_resume_live.clicked.connect(self.resume_requested)
         self.btn_resume_live.setVisible(False)
 
@@ -209,7 +198,7 @@ class LiveWidget(QWidget):
                   self.btn_fullscreen, self.btn_stop_live, self.btn_resume_live):
             cp.addWidget(w)
 
-        # ── Кнопки масштабирования (нижний правый угол) ───────────────
+    def _build_zoom_panel(self) -> None:
         self.zoom_panel = QWidget(self._pw)
         self.zoom_panel.setStyleSheet(
             "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
@@ -220,19 +209,18 @@ class LiveWidget(QWidget):
 
         self.btn_zoom_in = QPushButton("+")
         self.btn_zoom_in.setFixedSize(28, 28)
-        self.btn_zoom_in.setStyleSheet(_btn)
+        self.btn_zoom_in.setStyleSheet(self._make_button_style())
         self.btn_zoom_in.clicked.connect(self._zoom_in)
 
         self.btn_zoom_out = QPushButton("−")
         self.btn_zoom_out.setFixedSize(28, 28)
-        self.btn_zoom_out.setStyleSheet(_btn)
+        self.btn_zoom_out.setStyleSheet(self._make_button_style())
         self.btn_zoom_out.clicked.connect(self._zoom_out)
 
         zp.addWidget(self.btn_zoom_in)
         zp.addWidget(self.btn_zoom_out)
 
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
+    def _reposition_panels(self) -> None:
         self.control_panel.adjustSize()
         pw = self.control_panel.width()
         self.control_panel.move(self.width() - pw - 10, 10)
@@ -241,25 +229,41 @@ class LiveWidget(QWidget):
         zh = self.zoom_panel.height()
         self.zoom_panel.move(self.width() - zw - 40, self.height() - zh - 60)
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reposition_panels()
+
+    def closeEvent(self, event) -> None:
+        self._range_timer.stop()
+        super().closeEvent(event)
+
     # ------------------------------------------------------------------
     # Публичный API
     # ------------------------------------------------------------------
 
     def update_spectrum(self, freqs_hz: np.ndarray, amps_db: np.ndarray) -> None:
+        if len(amps_db) == 0:
+            return
+
         freqs_mhz = freqs_hz / 1e6
         n = len(amps_db)
         data_min = float(freqs_mhz.min())
         data_max = float(freqs_mhz.max())
 
-        # Определяем, сменился ли частотный диапазон (ретюнинг > 50 кГц)
-        range_shifted = (abs(data_min - self._last_data_min) > 0.05 or
-                         abs(data_max - self._last_data_max) > 0.05)
+        range_shifted = (
+            abs(data_min - self._last_data_min) > self._RETUNE_THRESHOLD_MHZ or
+            abs(data_max - self._last_data_max) > self._RETUNE_THRESHOLD_MHZ
+        )
 
         # EMA-сглаживание; при смене диапазона — сброс для чистого старта
         if self._ema_spectrum is None or len(self._ema_spectrum) != n or range_shifted:
             self._ema_spectrum = amps_db.copy()
+            self._ema_buf = np.empty(n, dtype=self._ema_spectrum.dtype)
         else:
-            self._ema_spectrum += self._EMA_ALPHA * (amps_db - self._ema_spectrum)
+            # in-place: ema += alpha * (amps - ema) без временных массивов
+            np.subtract(amps_db, self._ema_spectrum, out=self._ema_buf)
+            np.multiply(self._ema_buf, self._EMA_ALPHA, out=self._ema_buf)
+            np.add(self._ema_spectrum, self._ema_buf, out=self._ema_spectrum)
         self._live_curve.setData(freqs_mhz, self._ema_spectrum)
 
         # Peak Hold; при смене диапазона сбрасываем — старые данные к новым частотам не относятся
@@ -270,9 +274,6 @@ class LiveWidget(QWidget):
         if self._show_peak:
             self._peak_curve.setData(freqs_mhz, self._peak_hold)
 
-        # Выравниваем вид под реальные данные:
-        #   — при первом кадре (нет паддинга → нет пустого левого края)
-        #   — после ретюнинга (диапазон данных сместился)
         if not self._x_initialized or (self._follow_span_mhz is not None and range_shifted):
             vb = self._pw.getPlotItem().getViewBox()
             self._snap_in_progress = True
@@ -283,26 +284,30 @@ class LiveWidget(QWidget):
         self._last_data_max = data_max
 
         self._frame_count += 1
-        now = time.time()
+        now = time.perf_counter()
         dt = now - self._last_time
         if dt >= 1.0:
             self.lbl_fps.setText(f"{self._frame_count / dt:.0f} к/с")
             self._frame_count = 0
             self._last_time = now
 
-    def reset_peak(self) -> None:
+    def clear_peak(self) -> None:
         self._peak_hold = None
         self._peak_curve.setData([], [])
 
     def reset_view(self) -> None:
-        """Сбросить масштаб: X по текущим данным, Y — центр в 0 дБ."""
+        """Сбросить масштаб: X по текущим данным, Y — по видимым кривым."""
         vb = self._pw.getPlotItem().getViewBox()
         data = self._live_curve.getData()
         if data[0] is not None and len(data[0]) > 0:
             vb.setXRange(float(data[0].min()), float(data[0].max()), padding=0.01)
 
+        curves = [self._live_curve]
+        if self._show_peak:
+            curves.append(self._peak_curve)
+
         all_y = []
-        for curve in (self._live_curve, self._peak_curve):
+        for curve in curves:
             yd = curve.getData()[1]
             if yd is not None and len(yd) > 0:
                 all_y.append(float(yd.min()))
@@ -314,18 +319,22 @@ class LiveWidget(QWidget):
             vb.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     def clear(self) -> None:
+        pi = self._pw.getPlotItem()
+        if self._highlight_line is not None:
+            pi.removeItem(self._highlight_line)
+            self._highlight_line = None
         self._peak_hold    = None
         self._ema_spectrum = None
+        self._ema_buf      = None
         self._x_initialized = False
         self._last_data_min = 0.0
         self._last_data_max = 0.0
         self._last_highlight_mhz = None
-        self._highlight_line = None   # виджет пересоздаётся при следующем вызове highlight_mark
         self._live_curve.setData([], [])
         self._peak_curve.setData([], [])
         self.lbl_fps.setText("—")
         self._frame_count = 0
-        self._last_time = time.time()
+        self._last_time = time.perf_counter()
 
     def clear_marks(self) -> None:
         pi = self._pw.getPlotItem()
@@ -334,29 +343,32 @@ class LiveWidget(QWidget):
         self._marked_lines.clear()
         self.marked_freqs_mhz.clear()
 
-    def set_marks(self, freqs_mhz: list) -> None:
+    def set_marks(self, freqs_mhz: list[float]) -> None:
         """Синхронизировать метки с внешним списком. Сигнал freq_marked не испускается."""
         self.clear_marks()
         pi = self._pw.getPlotItem()
         for f in freqs_mhz:
+            if not isinstance(f, (int, float)):
+                continue
+            if any(abs(existing - f) < self._MIN_MARK_SPACING_MHZ
+                   for existing in self.marked_freqs_mhz):
+                continue
             line = self._make_mark_line(f)
             line.setPos(f)
             pi.addItem(line)
             self._marked_lines.append(line)
-            self.marked_freqs_mhz.append(f)
+            self.marked_freqs_mhz.append(float(f))
 
-    def highlight_mark(self, freq_mhz) -> None:
+    def highlight_mark(self, freq_mhz: float | None) -> None:
         """Подсветить выбранную частоту белой линией. Передать None для сброса."""
         self._last_highlight_mhz = freq_mhz
 
-        # Цвет метки-якоря (оранжевый/белый)
         for line, f in zip(self._marked_lines, self.marked_freqs_mhz):
-            is_sel = freq_mhz is not None and abs(f - freq_mhz) < 0.001
+            is_sel = freq_mhz is not None and abs(f - freq_mhz) < self._HIGHLIGHT_MATCH_MHZ
             color  = "#FFFFFF" if is_sel else "#FF9800"
             width  = 2.5      if is_sel else 1.5
             line.setPen(pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine))
 
-        # Отдельная белая линия-индикатор (как в SpectrumWidget)
         if not self._highlight_enabled or freq_mhz is None:
             if self._highlight_line is not None:
                 self._highlight_line.setVisible(False)
@@ -369,7 +381,7 @@ class LiveWidget(QWidget):
                 label="{value:.3f} МГц",
                 labelOpts={
                     "color": "#FFFFFF",
-                    "position": 0.95,
+                    "position": self._LABEL_HL_POS,
                     "fill": pg.mkBrush(40, 40, 40, 210),
                 },
             )
@@ -383,9 +395,8 @@ class LiveWidget(QWidget):
         self._highlight_enabled = checked
         if checked and self._last_highlight_mhz is not None:
             self.highlight_mark(self._last_highlight_mhz)
-        elif not checked:
-            if self._highlight_line is not None:
-                self._highlight_line.setVisible(False)
+        elif not checked and self._highlight_line is not None:
+            self._highlight_line.setVisible(False)
 
     # ------------------------------------------------------------------
     # Приватные методы
@@ -401,7 +412,7 @@ class LiveWidget(QWidget):
             label=f"{freq_mhz:.3f} МГц",
             labelOpts={
                 "color": color,
-                "position": 0.88,
+                "position": self._LABEL_MARK_POS,
                 "fill": pg.mkBrush(20, 10, 0, 190),
             },
         )
@@ -429,10 +440,9 @@ class LiveWidget(QWidget):
             self.freq_selected.emit(freq_mhz)
 
     def _add_mark(self, freq_mhz: float) -> None:
-        if any(abs(f - freq_mhz) < self._MIN_MARK_SPACING_MHZ 
-            for f in self.marked_freqs_mhz):
-            return  # silently ignore
-
+        if any(abs(f - freq_mhz) < self._MIN_MARK_SPACING_MHZ
+               for f in self.marked_freqs_mhz):
+            return
         line = self._make_mark_line(freq_mhz)
         line.setPos(freq_mhz)
         self._pw.getPlotItem().addItem(line)
@@ -462,7 +472,7 @@ class LiveWidget(QWidget):
         """Переключить вид кнопок ■/▶ в зависимости от состояния потока."""
         self.btn_stop_live.setVisible(running)
         self.btn_resume_live.setVisible(not running)
-        self.control_panel.adjustSize()
+        self._reposition_panels()
 
     def set_follow_mode(self, span_mhz: float | None) -> None:
         """Включить/выключить follow-режим. span_mhz=None — выключить."""
@@ -483,9 +493,8 @@ class LiveWidget(QWidget):
             return
         x0, x1 = float(range_[0]), float(range_[1])
 
-        # Фиксация полосы: если ширина изменилась — восстанавливаем, меняем только центр
         if (self._locked_span_mhz is not None and
-                abs((x1 - x0) - self._locked_span_mhz) > 0.01):
+                abs((x1 - x0) - self._locked_span_mhz) > self._SPAN_LOCK_TOLERANCE_MHZ):
             cx = (x0 + x1) / 2
             half = self._locked_span_mhz / 2
             x0, x1 = cx - half, cx + half
@@ -494,9 +503,9 @@ class LiveWidget(QWidget):
             self._snap_in_progress = False
 
         self._pending_range = (x0, x1)
-        self._range_timer.start(100)
+        self._range_timer.start(self._RANGE_DEBOUNCE_MS)
 
     def _emit_pending_range(self) -> None:
-        if self._pending_range is not None:
+        if self._pending_range is not None and self._x_initialized:
             self.view_range_changed.emit(*self._pending_range)
             self._pending_range = None
