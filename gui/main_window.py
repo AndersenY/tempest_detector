@@ -1059,7 +1059,7 @@ class MainWindow(QMainWindow):
         x_min, x_max = float(f_mhz.min()), float(f_mhz.max())
         self.plot.clear()
         self.plot.set_freq_range(x_min, x_max)
-        self.plot.add("OFF (фон)", f_mhz, off_spec.amplitudes_db, "b")
+        self.plot.add("OFF (фон)", f_mhz, off_spec.amplitudes_db, "#39FF14", width=0.8)
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
         # Восстанавливаем метки после clear() — нужны на графике во время фазы 1
         self.plot.set_panorama_marks([f / 1e6 for f in self._bookmark_freqs_hz])
@@ -1434,6 +1434,8 @@ class MainWindow(QMainWindow):
 
         if self.wf and hasattr(self.wf, "signals"):
             self._update_table_only()
+            if self.wf.signals:
+                self.plot.plot_signals(self.wf.signals)
 
     def _do_ui_reset(self):
         # Отключаем finished_signal до сброса — иначе он переопределит текст кнопки
@@ -1603,7 +1605,7 @@ class MainWindow(QMainWindow):
         self.plot.clear()
         self.plot.set_freq_range(x_min, x_max)
         self.plot.add("ON (Test)", f_mhz, on.amplitudes_db, "y")
-        self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, "b")
+        self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, "#39FF14", width=0.8)
         self.plot.add("Difference", f_mhz, diff, "r", width=2)
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
 

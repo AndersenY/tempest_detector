@@ -142,6 +142,7 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
 
             self._signals = self.proc.detect(diff, on_spec)
             self._merge_bookmark_candidates(on_spec, off_spec)
+            self.on_signal_updated()   # обновить маркеры на графике сразу после обнаружения
             self.on_progress(70)
 
             count = len(self._signals)
