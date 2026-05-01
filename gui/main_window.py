@@ -8,8 +8,8 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
                              QProgressBar, QMessageBox, QGroupBox, QHeaderView,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
-                             QCheckBox, QStackedWidget)
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+                             QCheckBox, QStackedWidget, QComboBox)
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.config import PanoramaConfig
 from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator
@@ -223,6 +223,15 @@ class MainWindow(QMainWindow):
             }
             QProgressBar::chunk { background-color: #2196F3; width: 10px; margin: 0.5px; }
         """)
+        # Плавная анимация прогрессбара
+        self._prog_anim = QPropertyAnimation(self.prog, b"value")
+        self._prog_anim.setDuration(450)
+        self._prog_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        # Таймер буферизации для полуавтоматического режима
+        self._settle_timer = QTimer()
+        self._settle_timer.setSingleShot(True)
+        self._settle_timer.timeout.connect(self._finish_semi_auto_resume)
 
         self.btn_stop = QPushButton("↺ СБРОС")
         self.btn_stop.setStyleSheet("""
@@ -322,19 +331,44 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.expert_panel)
 
         # ── Панель удалённого управления ──────────────────────────────
-        remote_box = QGroupBox("Удалённое управление")
-        remote_box.setStyleSheet("""
+        _remote_style = """
             QGroupBox { font-weight: bold; border: 1px solid #444; border-radius: 4px;
                         margin-top: 8px; padding-top: 6px; color: #90CAF9; font-size: 11px; }
             QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
             QLabel { color: #ccc; font-size: 11px; }
-            QSpinBox { background:#333; color:#e0e0e0; border:1px solid #555;
-                       border-radius:3px; padding:1px 3px; }
-        """)
+            QSpinBox, QComboBox { background:#333; color:#e0e0e0; border:1px solid #555;
+                                  border-radius:3px; padding:1px 3px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background:#2b2b2b; color:#e0e0e0;
+                                          selection-background-color:#444; }
+        """
+        remote_box = QGroupBox("Удалённое управление")
+        remote_box.setStyleSheet(_remote_style)
         remote_inner = QVBoxLayout(remote_box)
-        remote_inner.setSpacing(4)
-        remote_inner.setContentsMargins(8, 4, 8, 6)
+        remote_inner.setSpacing(5)
+        remote_inner.setContentsMargins(8, 4, 8, 8)
 
+        # Строка 1: выбор режима
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Режим:"))
+        self._combo_mode = QComboBox()
+        self._combo_mode.addItem("Ручной",              "manual")
+        self._combo_mode.addItem("Полуавтоматический",  "semi_auto")
+        self._combo_mode.addItem("Автоматический",       "auto")
+        self._combo_mode.setToolTip(
+            "<b>Ручной</b> — оператор включает/выключает тест вручную, клиент не нужен.<br>"
+            "<b>Полуавтоматический</b> — оператор нажимает кнопки на детекторе,<br>"
+            "тест включается/выключается автоматически через сеть.<br>"
+            "<b>Автоматический</b> — детектор управляет всем самостоятельно,<br>"
+            "участие оператора не требуется."
+        )
+        self._combo_mode.setMinimumWidth(155)
+        self._combo_mode.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self._combo_mode)
+        mode_row.addStretch()
+        remote_inner.addLayout(mode_row)
+
+        # Строка 2: адрес сервера
         addr_row = QHBoxLayout()
         addr_row.addWidget(QLabel("Адрес сервера:"))
         self._lbl_remote_addr = QLabel(self._remote_server.local_address)
@@ -343,17 +377,18 @@ class MainWindow(QMainWindow):
         addr_row.addStretch()
         remote_inner.addLayout(addr_row)
 
+        # Строка 3: статус подключений + буфер
         status_row = QHBoxLayout()
         self._lbl_remote_clients = QLabel("● Нет подключений")
         self._lbl_remote_clients.setStyleSheet("color:#888;")
         status_row.addWidget(self._lbl_remote_clients)
         status_row.addStretch()
-        settle_lbl = QLabel("Буфер:")
-        settle_lbl.setToolTip(
+        self._lbl_settle = QLabel("Буфер:")
+        self._lbl_settle.setToolTip(
             "Пауза после команды ON/OFF перед захватом спектра.\n"
             "Позволяет сетевому трафику затихнуть до начала измерения."
         )
-        status_row.addWidget(settle_lbl)
+        status_row.addWidget(self._lbl_settle)
         self._spin_settle = QSpinBox()
         self._spin_settle.setRange(100, 5000)
         self._spin_settle.setValue(500)
@@ -621,6 +656,7 @@ class MainWindow(QMainWindow):
         """Прерывает текущий процесс и возвращает программу в начальное состояние."""
         self._resetting = True
         self.btn_action.setEnabled(False)   # блокируем повторный запуск
+        self._settle_timer.stop()           # отменяем буферную паузу если активна
 
         self._stop_panorama_preview()
         if self.wf:
@@ -643,18 +679,66 @@ class MainWindow(QMainWindow):
             self._launch_measurement_from_preview()
             return
         else:
-            # Перед возобновлением — переключаем тест-сигнал симулятора если нужно
-            if isinstance(self.ctrl, DemoSimulator):
-                title = self._current_action_title
-                if "ФОН ИЗМЕРЕН" in title:
-                    self.ctrl.test_active = True
-                elif "ВЕРИФИКАЦИЯ 1 ЗАВЕРШЕНА" in title:
-                    self.ctrl.test_active = False
-            if self.wf:
-                self.wf.resume()
-                self.btn_action.setEnabled(False)
-                self.lbl_instruction.setText("⏳ Выполнение измерения...")
-                self.btn_stop.setEnabled(True)
+            # Определяем нужно ли авто-переключение теста на этом шаге
+            title = self._current_action_title
+            if "ФОН ИЗМЕРЕН" in title:
+                self._begin_phase_transition(activate=True)
+            elif "ВЕРИФИКАЦИЯ 1 ЗАВЕРШЕНА" in title:
+                self._begin_phase_transition(activate=False)
+            else:
+                # Промежуточный шаг — просто продолжаем без команды
+                if self.wf:
+                    self.wf.resume()
+                    self.btn_action.setEnabled(False)
+                    self.lbl_instruction.setText("⏳ Выполнение измерения...")
+                    self.btn_stop.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # Полуавтоматическое управление тестовым сигналом
+    # ------------------------------------------------------------------
+
+    def _should_auto_control_test(self) -> bool:
+        """
+        True если выбран полу- или автоматический режим И есть кому отправить команду
+        (подключённые клиенты или DemoSimulator).
+        """
+        if self._control_mode == "manual":
+            return False
+        return (
+            self._remote_server.client_count > 0
+            or isinstance(self.ctrl, DemoSimulator)
+        )
+
+    def _begin_phase_transition(self, activate: bool) -> None:
+        """
+        Полуавтоматический переход (вызывается при клике кнопки).
+        Отправляет команду теста, выдерживает буфер, затем возобновляет workflow.
+        В ручном режиме — просто возобновляет немедленно.
+        """
+        if self._should_auto_control_test():
+            self._on_test_activate(activate)
+            settle_ms = self._spin_settle.value()
+            label = "ВКЛ" if activate else "ВЫКЛ"
+            self.btn_action.setEnabled(False)
+            self.btn_stop.setEnabled(True)
+            self.lbl_instruction.setText(
+                f"<b>⏳ Тест {label} — стабилизация {settle_ms} мс...</b><br>"
+                "<span style='color:#aaa'>Сетевой трафик затихает перед захватом спектра.</span>"
+            )
+            self._settle_timer.start(settle_ms)
+        else:
+            # Ручной режим — команды не посылаем, продолжаем немедленно
+            self._finish_semi_auto_resume()
+
+    def _finish_semi_auto_resume(self) -> None:
+        """Вызывается таймером после буферной паузы — возобновляет workflow."""
+        if self.wf:
+            self.wf.resume()
+        self.btn_action.setEnabled(False)
+        self.lbl_instruction.setText("⏳ Выполнение измерения...")
+        self.btn_stop.setEnabled(True)
+
+    # ------------------------------------------------------------------
 
     def _connect_and_start(self):
         if not self._apply_settings_to_cfg():
@@ -917,7 +1001,7 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self.act_save.setEnabled(False)
         self.act_export_spectrum.setEnabled(False)
-        self.prog.setValue(0)
+        self._reset_progress()
         self._stop_zero_span()
         self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.set_zero_span_active(False)
@@ -930,15 +1014,15 @@ class MainWindow(QMainWindow):
         self._refresh_bookmark_table()
 
         self.wf = self._make_workflow()
-        # Подключаем авто-управление если есть хоть один клиент
-        if self._remote_server.client_count > 0 or isinstance(self.ctrl, DemoSimulator):
-            self.wf.auto_settle_s = self._spin_settle.value() / 1000.0
         self.wf.on_test_activate = self._on_test_activate
+        # Автоматический режим: workflow сам переключает фазы без участия оператора
+        if self._control_mode == "auto" and self._should_auto_control_test():
+            self.wf.auto_settle_s = self._spin_settle.value() / 1000.0
         self.thread = Worker(self.wf)
 
         Q = Qt.ConnectionType.QueuedConnection
         self.thread.status.connect(lambda s: self.lbl_instruction.setText(s), Q)
-        self.thread.progress.connect(lambda v: self.prog.setValue(int(v)), Q)
+        self.thread.progress.connect(lambda v: self._set_progress(int(v)), Q)
         self.thread.data.connect(self._plot_data, Q)
         self.thread.off_spectrum_ready.connect(self._on_off_spectrum_ready, Q)
         self.thread.action_needed.connect(self._on_action_needed, Q)
@@ -1276,6 +1360,28 @@ class MainWindow(QMainWindow):
         self.current_step = "waiting"
         self._current_action_title = title
 
+        # Текст инструкции зависит от режима управления
+        mode = self._control_mode
+        settle = self._spin_settle.value()
+        if mode == "semi_auto" and self._should_auto_control_test():
+            if "ФОН ИЗМЕРЕН" in title:
+                instruction = (
+                    "Нажмите кнопку — тест включится автоматически.<br>"
+                    f"<span style='color:#90CAF9'>Буфер стабилизации: {settle} мс.</span>"
+                )
+            elif "ВЕРИФИКАЦИЯ 1 ЗАВЕРШЕНА" in title:
+                instruction = (
+                    "Нажмите кнопку — тест выключится автоматически.<br>"
+                    f"<span style='color:#90CAF9'>Буфер стабилизации: {settle} мс.</span>"
+                )
+        elif mode == "auto" and self._should_auto_control_test():
+            # В автоматическом режиме эти диалоги не должны появляться
+            # (workflow auto-advances), но на случай промежуточных пауз
+            instruction = (
+                "<span style='color:#aaa'>Автоматический режим — "
+                "продолжение без участия оператора.</span>"
+            )
+
         color = "#FF9800"
         if "ЗАВЕРШЕНА" in title or "ЗАВЕРШЕНО" in title:
             color = "#4CAF50"
@@ -1327,7 +1433,7 @@ class MainWindow(QMainWindow):
         self.plot.clear()
         self.plot.clear_panorama_marks()
         self.table.setRowCount(0)
-        self.prog.setValue(0)
+        self._reset_progress()
         self._stop_zero_span()
         self.live_widget.clear()
         self.live_widget.highlight_mark(None)
@@ -1396,6 +1502,18 @@ class MainWindow(QMainWindow):
         ]
         self._update_table_from_signals(bookmarks)
 
+    def _set_progress(self, value: int) -> None:
+        """Плавно анимирует прогрессбар к целевому значению."""
+        self._prog_anim.stop()
+        self._prog_anim.setStartValue(self.prog.value())
+        self._prog_anim.setEndValue(value)
+        self._prog_anim.start()
+
+    def _reset_progress(self) -> None:
+        """Мгновенно сбрасывает прогрессбар в 0, останавливая текущую анимацию."""
+        self._prog_anim.stop()
+        self.prog.setValue(0)
+
     def _on_thread_finished(self):
         # Вызывается только при нормальном завершении (при сбросе — отключается в _do_ui_reset)
         self.btn_stop.setEnabled(True)
@@ -1408,10 +1526,24 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background-color: #1976D2; }
         """)
         self.expert_panel.enable_remeasure(True)
+        # Сбрасываем прогрессбар — готово к новому поиску
+        self._reset_progress()
 
     # ------------------------------------------------------------------
     # Удалённое управление тестовым клиентом
     # ------------------------------------------------------------------
+
+    @property
+    def _control_mode(self) -> str:
+        """Текущий режим: 'manual' | 'semi_auto' | 'auto'."""
+        return self._combo_mode.currentData()
+
+    def _on_mode_changed(self, _: int) -> None:
+        mode = self._control_mode
+        # Буфер актуален только в полу- и автоматическом режимах
+        enabled = (mode != "manual")
+        self._spin_settle.setEnabled(enabled)
+        self._lbl_settle.setEnabled(enabled)
 
     def _on_remote_client_count(self, count: int) -> None:
         # Вызывается из фонового потока — emit через signal безопасен
@@ -1428,7 +1560,7 @@ class MainWindow(QMainWindow):
             self._lbl_remote_clients.setStyleSheet("color:#66BB6A;")
 
     def _on_test_activate(self, active: bool) -> None:
-        """Вызывается из рабочего потока workflow при авто-переходе."""
+        """Активирует/деактивирует тест: DemoSimulator + remote clients."""
         if isinstance(self.ctrl, DemoSimulator):
             self.ctrl.test_active = active
         if active:
