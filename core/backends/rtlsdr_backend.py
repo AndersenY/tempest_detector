@@ -77,21 +77,33 @@ class RtlSdrBackend(BaseInstrument):
         else:
             self._sdr.gain = cfg.sdr_gain_db
 
+    # Время стабилизации PLL после смены центральной частоты.
+    # Режим измерения — консервативно (качество важнее скорости).
+    # Быстрый режим — для live preview, где нужна скорость.
+    _SWEEP_SETTLE_S      = 0.05
+    _SWEEP_SETTLE_FAST_S = 0.015
+    _CAPTURE_SETTLE_S      = 0.010
+    _CAPTURE_SETTLE_FAST_S = 0.003
+
     def capture_spectrum(self) -> Spectrum:
         if not self._sdr or not self._cfg:
             raise RuntimeError("RTL-SDR не настроен")
 
         cfg = self._cfg
         span = cfg.stop_freq_hz - cfg.start_freq_hz
+        # Быстрый режим: live preview (1 усреднение, нет MaxHold)
+        fast = cfg.averaging_count <= 1 and not cfg.use_max_hold
 
         if span <= self._USABLE_BW:
-            return self._capture_single(cfg.start_freq_hz, cfg.stop_freq_hz, cfg)
-        return self._capture_sweep(cfg)
+            return self._capture_single(cfg.start_freq_hz, cfg.stop_freq_hz, cfg, fast=fast)
+        return self._capture_sweep(cfg, fast=fast)
 
     def _capture_single(self, start_hz: float, stop_hz: float,
-                        cfg: PanoramaConfig) -> Spectrum:
+                        cfg: PanoramaConfig, fast: bool = False) -> Spectrum:
+        flush_bytes = 1024 * 4 if fast else 1024 * 16
+        settle_s    = self._CAPTURE_SETTLE_FAST_S if fast else self._CAPTURE_SETTLE_S
         try:
-            self._sdr.read_bytes(1024 * 16)
+            self._sdr.read_bytes(flush_bytes)
         except Exception:
             pass
 
@@ -101,7 +113,7 @@ class RtlSdrBackend(BaseInstrument):
         valid_count = 0
 
         for _ in range(cfg.averaging_count):
-            time.sleep(0.01)
+            time.sleep(settle_s)
             try:
                 raw = self._sdr.read_samples(cfg.fft_size)
             except Exception as e:
@@ -135,9 +147,10 @@ class RtlSdrBackend(BaseInstrument):
             timestamp=time.time(),
         )
 
-    def _capture_sweep(self, cfg: PanoramaConfig) -> Spectrum:
+    def _capture_sweep(self, cfg: PanoramaConfig, fast: bool = False) -> Spectrum:
         sr = self._SAFE_SR
         step = self._USABLE_BW
+        settle_s = self._SWEEP_SETTLE_FAST_S if fast else self._SWEEP_SETTLE_S
 
         centers = []
         c = cfg.start_freq_hz + sr / 2
@@ -150,12 +163,12 @@ class RtlSdrBackend(BaseInstrument):
 
         for center in centers:
             self._sdr.center_freq = int(center)
-            time.sleep(0.05)
+            time.sleep(settle_s)
 
             step_start = max(center - step / 2, cfg.start_freq_hz)
             step_stop  = min(center + step / 2, cfg.stop_freq_hz)
 
-            chunk = self._capture_single(step_start, step_stop, cfg)
+            chunk = self._capture_single(step_start, step_stop, cfg, fast=fast)
             all_freqs.append(chunk.frequencies_hz)
             all_db.append(chunk.amplitudes_db)
 
