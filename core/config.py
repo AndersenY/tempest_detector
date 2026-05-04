@@ -15,7 +15,7 @@ class PanoramaConfig:
     use_max_hold: bool = False
     threshold_db: float = 6.0
     calibration_offset_db: float = 0.0
-    sdr_gain_db: float = 30.0
+    sdr_gain_db: float = 10.0
     use_agc: bool = False
     # Группировка смежных точек по алгоритму п. 6.2.2 РЭ
     combine_triplets: bool = True

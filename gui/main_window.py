@@ -912,9 +912,10 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self._stop_zero_span()
 
-        # Очищаем метки предыдущего сеанса
+        # Очищаем метки и результаты предыдущего сеанса
         self._bookmark_freqs_hz.clear()
         self.plot.clear_panorama_marks()
+        self.table.setRowCount(0)
 
         # Показываем live_widget
         self._spectrum_stack.setCurrentIndex(2)
