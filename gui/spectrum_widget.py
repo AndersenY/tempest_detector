@@ -179,13 +179,22 @@ class SpectrumPlotWidget(QWidget):
         half = (x1 - x0) / 2 / self._ZOOM_FACTOR
         vb.setXRange(cx - half, cx + half, padding=0)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
+    def _reposition_panels(self):
+        self.control_panel.adjustSize()
         panel_w = self.control_panel.width()
         self.control_panel.move(self.width() - panel_w - 10, 10)
+        self.zoom_panel.adjustSize()
         zoom_w = self.zoom_panel.width()
         zoom_h = self.zoom_panel.height()
         self.zoom_panel.move(self.width() - zoom_w - 40, self.height() - zoom_h - 60)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_panels()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._reposition_panels()
 
     # ------------------------------------------------------------------
     # Тема оформления
