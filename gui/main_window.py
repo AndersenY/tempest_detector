@@ -604,6 +604,9 @@ class MainWindow(QMainWindow):
         self.spin_stop_freq = spin(25, 1750, self.cfg.stop_freq_hz / 1e6, 1.0, 2)
         layout.addWidget(self.spin_stop_freq)
 
+        self.spin_start_freq.editingFinished.connect(self._clamp_freq_start)
+        self.spin_stop_freq.editingFinished.connect(self._clamp_freq_stop)
+
         # Порог обнаружения
         layout.addWidget(QLabel("Порог (дБ):"))
         self.spin_threshold = spin(1.0, 40.0, self.cfg.threshold_db, 0.5, 1)
@@ -646,6 +649,24 @@ class MainWindow(QMainWindow):
             self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_lock_bw,
         ]
         return box
+
+    def _clamp_freq_start(self) -> None:
+        start = self.spin_start_freq.value()
+        stop  = self.spin_stop_freq.value()
+        if start >= stop:
+            new_stop = min(start + 2.0, self.spin_stop_freq.maximum())
+            self.spin_stop_freq.blockSignals(True)
+            self.spin_stop_freq.setValue(new_stop)
+            self.spin_stop_freq.blockSignals(False)
+
+    def _clamp_freq_stop(self) -> None:
+        start = self.spin_start_freq.value()
+        stop  = self.spin_stop_freq.value()
+        if stop <= start:
+            new_start = max(stop - 2.0, self.spin_start_freq.minimum())
+            self.spin_start_freq.blockSignals(True)
+            self.spin_start_freq.setValue(new_start)
+            self.spin_start_freq.blockSignals(False)
 
     def _apply_settings_to_cfg(self):
         start = self.spin_start_freq.value() * 1e6
@@ -1112,10 +1133,13 @@ class MainWindow(QMainWindow):
         )
         self._panorama_preview_worker.start()
 
-        # Подключаем все настройки — изменение → обновление live preview
+        # Подключаем все настройки — изменение → обновление live preview.
+        # editingFinished нужен для ручного ввода: valueChanged не срабатывает пока
+        # промежуточное значение не войдёт в допустимый диапазон.
         for w in self._settings_widgets:
             if isinstance(w, (QDoubleSpinBox, QSpinBox)):
                 w.valueChanged.connect(self._on_preview_settings_changed)
+                w.editingFinished.connect(self._on_preview_settings_changed)
             elif isinstance(w, QCheckBox):
                 w.toggled.connect(self._on_preview_settings_changed)
 
@@ -1136,6 +1160,8 @@ class MainWindow(QMainWindow):
         for w in self._settings_widgets:
             if isinstance(w, (QDoubleSpinBox, QSpinBox)):
                 try: w.valueChanged.disconnect(self._on_preview_settings_changed)
+                except Exception: pass
+                try: w.editingFinished.disconnect(self._on_preview_settings_changed)
                 except Exception: pass
             elif isinstance(w, QCheckBox):
                 try: w.toggled.disconnect(self._on_preview_settings_changed)
