@@ -202,7 +202,7 @@ class SpectrumPlotWidget(QWidget):
         except AttributeError:
             pass
         try:
-            for _sample, label in self.legend.items:
+            for _, label in self.legend.items:
                 label.setColor(t["text_axis"])
         except Exception:
             pass
@@ -256,6 +256,17 @@ class SpectrumPlotWidget(QWidget):
         self.btn_zoom_in.setStyleSheet(btn)
         self.btn_zoom_out.setStyleSheet(btn)
 
+        # Обновить существующую highlight-линию
+        if self._highlight_line is not None:
+            self._highlight_line.setPen(
+                pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine)
+            )
+            try:
+                self._highlight_line.label.setColor(pg.mkColor(t["marker_label_fg"]))
+                self._highlight_line.label.fill = pg.mkBrush(*t["marker_label_fill"])
+            except Exception:
+                pass
+
     def _on_marker_toggle(self, checked: bool):
         self.markers_visible = checked
         for marker in self.signal_markers:
@@ -292,7 +303,7 @@ class SpectrumPlotWidget(QWidget):
         line = pg.InfiniteLine(
             angle=90,
             movable=False,
-            pen=pg.mkPen("#FF9800", width=1.5, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen(self._theme["panorama_mark"], width=1.5, style=Qt.PenStyle.DashLine),
             # label=f"{freq_mhz:.3f} МГц",
             # labelOpts={
             #     "color": "#FF9800",
@@ -346,11 +357,14 @@ class SpectrumPlotWidget(QWidget):
         if not signals:
             return
 
+        _tag_to_key = {"bookmark": "sig_bookmark", "pending": "sig_pending",
+                       "confirmed": "sig_confirmed"}
         for sig in signals:
-            color = _marker_color(sig)
-            if color is None:
+            tag = _marker_color(sig)
+            if tag is None:
                 continue  # сигнал отбракован — не рисуем
 
+            color = self._theme[_tag_to_key[tag]]
             line = pg.InfiniteLine(
                 angle=90,
                 movable=False,
@@ -367,14 +381,15 @@ class SpectrumPlotWidget(QWidget):
         if not self._highlight_enabled:
             return
         if self._highlight_line is None:
+            t = self._theme
             self._highlight_line = pg.InfiniteLine(
                 angle=90, movable=False,
-                pen=pg.mkPen((255, 255, 255), width=1.5, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine),
                 label="{value:.3f} МГц",
                 labelOpts={
-                    "color": "#FFFFFF",
+                    "color": t["marker_label_fg"],
                     "position": 0.95,
-                    "fill": pg.mkBrush(40, 40, 40, 210),
+                    "fill": pg.mkBrush(*t["marker_label_fill"]),
                 },
             )
             self._highlight_line.setZValue(100)
@@ -482,22 +497,17 @@ class SpectrumPlotWidget(QWidget):
 
 def _marker_color(sig):
     """
-    Возвращает RGB-кортеж для маркера или None, если сигнал не нужно рисовать.
-
-    Закладки (bookmark) до завершения верификаций: оранжевый (#FF9800)
-    Обычные кандидаты до верификаций:              жёлтый
-    В1 + В2 пройдены (ПЭМИН):                      зелёный
-    В1 или В2 провалена:                            None — не рисуем
+    Возвращает тег ('bookmark' | 'pending' | 'confirmed') или None.
+    None означает — сигнал отбракован, маркер не рисуем.
     """
     is_bookmark = getattr(sig, 'detection_method', '') == 'bookmark'
     v1 = sig.verified_1
     v2 = sig.verified_2
 
     if v1 is None or (v1 and v2 is None):
-        # Ожидание: закладки остаются оранжевыми, обычные — жёлтые
-        return (255, 152, 0) if is_bookmark else (255, 220, 50)
+        return "bookmark" if is_bookmark else "pending"
 
     if v1 and v2:
-        return (50, 220, 80)    # ПЭМИН подтверждён
+        return "confirmed"
 
     return None                 # В1 или В2 провалена — не рисуем

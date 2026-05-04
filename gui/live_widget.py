@@ -259,6 +259,39 @@ class LiveWidget(QWidget):
 
     def apply_theme(self, t: dict) -> None:
         self._theme = t
+
+        # Кривые
+        self._live_curve.setPen(pg.mkPen(t["curve_live"], width=0.8))
+        r, g, b, a = t["curve_live_fill"]
+        self._live_curve.setBrush(pg.mkBrush(r, g, b, a))
+        self._peak_curve.setPen(
+            pg.mkPen(t["curve_peak"], width=0.8, style=Qt.PenStyle.DashLine)
+        )
+
+        # Существующие метки
+        for line, f in zip(self._marked_lines, self.marked_freqs_mhz):
+            is_sel = (self._last_highlight_mhz is not None
+                      and abs(f - self._last_highlight_mhz) < self._HIGHLIGHT_MATCH_MHZ)
+            color = t["marker_sel"] if is_sel else t["marker_unsel"]
+            width = 2.5             if is_sel else 1.5
+            line.setPen(pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine))
+            try:
+                line.label.setColor(pg.mkColor(t["marker_label_fg"]))
+                line.label.fill = pg.mkBrush(*t["marker_label_fill"])
+            except Exception:
+                pass
+
+        # Существующая highlight-линия
+        if self._highlight_line is not None:
+            self._highlight_line.setPen(
+                pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine)
+            )
+            try:
+                self._highlight_line.label.setColor(pg.mkColor(t["marker_label_fg"]))
+                self._highlight_line.label.fill = pg.mkBrush(*t["marker_label_fill"])
+            except Exception:
+                pass
+
         self._pw.setBackground(t["bg_plot"])
         pi = self._pw.getPlotItem()
         s = {"color": t["text_axis"], "font-size": "12px"}
@@ -435,10 +468,11 @@ class LiveWidget(QWidget):
         """Подсветить выбранную частоту белой линией. Передать None для сброса."""
         self._last_highlight_mhz = freq_mhz
 
+        t = self._theme
         for line, f in zip(self._marked_lines, self.marked_freqs_mhz):
             is_sel = freq_mhz is not None and abs(f - freq_mhz) < self._HIGHLIGHT_MATCH_MHZ
-            color  = "#FFFFFF" if is_sel else "#FF9800"
-            width  = 2.5      if is_sel else 1.5
+            color  = t["marker_sel"]   if is_sel else t["marker_unsel"]
+            width  = 2.5               if is_sel else 1.5
             line.setPen(pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine))
 
         if not self._highlight_enabled or freq_mhz is None:
@@ -447,14 +481,15 @@ class LiveWidget(QWidget):
             return
 
         if self._highlight_line is None:
+            t = self._theme
             self._highlight_line = pg.InfiniteLine(
                 angle=90, movable=False,
-                pen=pg.mkPen((255, 255, 255), width=1.5, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine),
                 label="{value:.3f} МГц",
                 labelOpts={
-                    "color": "#FFFFFF",
+                    "color": t["marker_label_fg"],
                     "position": self._LABEL_HL_POS,
-                    "fill": pg.mkBrush(40, 40, 40, 210),
+                    "fill": pg.mkBrush(*t["marker_label_fill"]),
                 },
             )
             self._highlight_line.setZValue(100)
@@ -475,17 +510,18 @@ class LiveWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _make_mark_line(self, freq_mhz: float, highlighted: bool = False) -> pg.InfiniteLine:
-        color = "#FFFFFF" if highlighted else "#FF9800"
-        width = 2.5      if highlighted else 1.5
+        t = self._theme
+        color = t["marker_sel"] if highlighted else t["marker_unsel"]
+        width = 2.5              if highlighted else 1.5
         return pg.InfiniteLine(
             angle=90,
             movable=False,
             pen=pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine),
             label=f"{freq_mhz:.3f} МГц",
             labelOpts={
-                "color": color,
+                "color": t["marker_label_fg"],
                 "position": self._LABEL_MARK_POS,
-                "fill": pg.mkBrush(20, 10, 0, 190),
+                "fill": pg.mkBrush(*t["marker_label_fill"]),
             },
         )
 
