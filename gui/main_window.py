@@ -855,8 +855,12 @@ class MainWindow(QMainWindow):
         self._panorama_preview_worker.update_config(cfg)
 
     def _on_table_context_menu(self, pos) -> None:
-        """Правый клик по строке — удалить метку (доступно в preview и idle)."""
-        if self.current_step not in ("live_preview", "idle"):
+        """Правый клик по строке — удалить метку (доступно в preview, idle и ЭТАП 1)."""
+        phase1_waiting = (
+            self.current_step == "waiting" and
+            "ФОН ИЗМЕРЕН" in self._current_action_title
+        )
+        if self.current_step not in ("live_preview", "idle") and not phase1_waiting:
             return
         row = self.table.rowAt(pos.y())
         if row < 0:
@@ -892,8 +896,11 @@ class MainWindow(QMainWindow):
         self.table.clearSelection()
         self.live_widget.highlight_mark(None)
         self.plot.clear_highlight()
+        # Синхронизируем список кандидатов в workflow (если идёт ЭТАП 1)
+        if self.wf is not None and hasattr(self.wf, "update_bookmark_candidates"):
+            self.wf.update_bookmark_candidates(self._bookmark_freqs_hz)
         # Если измерение уже выполнено — убираем метку и из wf.signals
-        if self.wf and hasattr(self.wf, "signals"):
+        if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
             self.wf.signals = [s for s in self.wf.signals
                                if not (s.detection_method == "bookmark" and
                                        abs(s.frequency_hz - freq_hz) < 100e3)]
