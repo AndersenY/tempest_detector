@@ -605,7 +605,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.spin_stop_freq)
 
         self.spin_start_freq.editingFinished.connect(self._clamp_freq_start)
+        self.spin_start_freq.valueChanged.connect(self._clamp_freq_start)
         self.spin_stop_freq.editingFinished.connect(self._clamp_freq_stop)
+        self.spin_stop_freq.valueChanged.connect(self._clamp_freq_stop)
 
         # Порог обнаружения
         layout.addWidget(QLabel("Порог (дБ):"))
@@ -650,23 +652,47 @@ class MainWindow(QMainWindow):
         ]
         return box
 
+    _FREQ_BW_MHZ = 2.0   # аппаратная полоса RTL-SDR
+
     def _clamp_freq_start(self) -> None:
         start = self.spin_start_freq.value()
         stop  = self.spin_stop_freq.value()
-        if start >= stop:
-            new_stop = min(start + 2.0, self.spin_stop_freq.maximum())
-            self.spin_stop_freq.blockSignals(True)
-            self.spin_stop_freq.setValue(new_stop)
-            self.spin_stop_freq.blockSignals(False)
+        if self.chk_lock_bw.isChecked():
+            # Полоса фиксирована: стоп всегда = старт + 2 МГц
+            new_stop  = min(start + self._FREQ_BW_MHZ, self.spin_stop_freq.maximum())
+            new_start = new_stop - self._FREQ_BW_MHZ
+        elif start >= stop:
+            # Полоса свободная: только защита от старт ≥ стоп
+            new_stop  = min(start + self._FREQ_BW_MHZ, self.spin_stop_freq.maximum())
+            new_start = start
+        else:
+            return
+        self.spin_start_freq.blockSignals(True)
+        self.spin_stop_freq.blockSignals(True)
+        self.spin_start_freq.setValue(new_start)
+        self.spin_stop_freq.setValue(new_stop)
+        self.spin_start_freq.blockSignals(False)
+        self.spin_stop_freq.blockSignals(False)
 
     def _clamp_freq_stop(self) -> None:
         start = self.spin_start_freq.value()
         stop  = self.spin_stop_freq.value()
-        if stop <= start:
-            new_start = max(stop - 2.0, self.spin_start_freq.minimum())
-            self.spin_start_freq.blockSignals(True)
-            self.spin_start_freq.setValue(new_start)
-            self.spin_start_freq.blockSignals(False)
+        if self.chk_lock_bw.isChecked():
+            # Полоса фиксирована: старт всегда = стоп − 2 МГц
+            new_start = max(stop - self._FREQ_BW_MHZ, self.spin_start_freq.minimum())
+            new_stop  = new_start + self._FREQ_BW_MHZ
+        elif stop <= start:
+            # Полоса свободная: только защита от стоп ≤ старт
+            new_start = max(stop - self._FREQ_BW_MHZ, self.spin_start_freq.minimum())
+            new_stop  = stop
+        else:
+            return
+        self.spin_start_freq.blockSignals(True)
+        self.spin_stop_freq.blockSignals(True)
+        self.spin_start_freq.setValue(new_start)
+        self.spin_stop_freq.setValue(new_stop)
+        self.spin_start_freq.blockSignals(False)
+        self.spin_stop_freq.blockSignals(False)
 
     def _apply_settings_to_cfg(self):
         start = self.spin_start_freq.value() * 1e6
