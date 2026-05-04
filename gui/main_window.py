@@ -208,6 +208,14 @@ class MainWindow(QMainWindow):
         menu_view.addAction(self.act_theme_light)
 
     def _set_scan_mode(self, mode: str):
+        # Смена режима во время активной сессии → сбрасываем всё.
+        # scan_mode устанавливаем ДО вызова _reset_to_start, чтобы _do_ui_reset
+        # вызвал _set_scan_mode с уже новым режимом и корректно обновил кнопку.
+        if self.current_step != "idle" and mode != self.scan_mode:
+            self.scan_mode = mode
+            self._reset_to_start()
+            return
+
         self.scan_mode = mode
         if mode == "full":
             self.btn_action.setText("ПОДКЛЮЧИТЬ И НАЧАТЬ")
