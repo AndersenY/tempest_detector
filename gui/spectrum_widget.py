@@ -160,6 +160,8 @@ class SpectrumPlotWidget(QWidget):
         self._freq_range_mhz = None
         self._mark_mode = False
         self._panorama_marks: list = []
+        # theme_key → (curve_name, width) для обновления при смене темы
+        self._curve_keys: dict[str, tuple[str, int | float]] = {}
 
         self.plot.scene().sigMouseClicked.connect(self._on_scene_click)
 
@@ -264,6 +266,27 @@ class SpectrumPlotWidget(QWidget):
         )
         self.btn_zoom_in.setStyleSheet(btn)
         self.btn_zoom_out.setStyleSheet(btn)
+
+        # Обновить цвет существующих кривых
+        for name, (key, width) in self._curve_keys.items():
+            if name in self.curves:
+                self.curves[name].setPen(pg.mkPen(t[key], width=width))
+
+        # Обновить порог
+        if self.threshold_line is not None:
+            self.threshold_line.setPen(
+                pg.mkPen(t["curve_diff"], width=2, style=Qt.PenStyle.DashLine)
+            )
+
+        # Обновить ПЭМИН-маркеры
+        _tag_to_key = {"bookmark": "sig_bookmark", "pending": "sig_pending",
+                       "confirmed": "sig_confirmed"}
+        for marker in self.signal_markers:
+            tag = getattr(marker, "_pemin_tag", None)
+            if tag and tag in _tag_to_key:
+                marker.setPen(
+                    pg.mkPen(t[_tag_to_key[tag]], width=1.5, style=Qt.PenStyle.DashLine)
+                )
 
         # Обновить существующую highlight-линию
         if self._highlight_line is not None:
@@ -379,6 +402,7 @@ class SpectrumPlotWidget(QWidget):
                 movable=False,
                 pen=pg.mkPen(color, width=1.5, style=Qt.PenStyle.DashLine),
             )
+            line._pemin_tag = tag          # сохраняем для обновления при смене темы
             line.setPos(sig.frequency_hz / 1e6)
             line.setVisible(self.markers_visible)
             self.plot.addItem(line)
@@ -422,6 +446,7 @@ class SpectrumPlotWidget(QWidget):
     def clear(self):
         self.plot.clear()
         self.curves.clear()
+        self._curve_keys.clear()
         self.clear_markers()
         self._panorama_marks.clear()  # ссылки уже удалены plot.clear()
         self._highlight_line = None
@@ -434,8 +459,11 @@ class SpectrumPlotWidget(QWidget):
         self.btn_mark_mode.blockSignals(False)
         self._mark_mode = False
 
-    def add(self, name: str, freqs_mhz, amps_db, color_hex, fill=None, width=1):
+    def add(self, name: str, freqs_mhz, amps_db, color_hex, fill=None, width=1,
+            theme_key: str | None = None):
         pen = pg.mkPen(color=color_hex, width=width)
+        if theme_key:
+            self._curve_keys[name] = (theme_key, width)
         if name in self.curves:
             self.curves[name].setData(freqs_mhz, amps_db)
         else:

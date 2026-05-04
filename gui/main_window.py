@@ -1223,7 +1223,7 @@ class MainWindow(QMainWindow):
         x_min, x_max = float(f_mhz.min()), float(f_mhz.max())
         self.plot.clear()
         self.plot.set_freq_range(x_min, x_max)
-        self.plot.add("OFF (фон)", f_mhz, off_spec.amplitudes_db, self._theme["curve_off"], width=0.8)
+        self.plot.add("OFF (фон)", f_mhz, off_spec.amplitudes_db, self._theme["curve_off"], width=0.8, theme_key="curve_off")
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
         # Восстанавливаем метки после clear() — нужны на графике во время фазы 1
         self.plot.set_panorama_marks([f / 1e6 for f in self._bookmark_freqs_hz])
@@ -1514,10 +1514,10 @@ class MainWindow(QMainWindow):
         f_b = on_b.frequencies_hz / 1e6
 
         t = self._theme
-        self.plot.add("ON — сессия A",   f_a, on_a.amplitudes_db,  t["curve_on_a"],   width=1)
-        self.plot.add("ON — сессия B",   f_b, on_b.amplitudes_db,  t["curve_on_b"],   width=1)
-        self.plot.add("Δ — сессия A",    f_a, diff_a,              t["curve_diff_a"], width=2)
-        self.plot.add("Δ — сессия B",    f_b, diff_b,              t["curve_diff_b"], width=2)
+        self.plot.add("ON — сессия A", f_a, on_a.amplitudes_db, t["curve_on_a"],   width=1, theme_key="curve_on_a")
+        self.plot.add("ON — сессия B", f_b, on_b.amplitudes_db, t["curve_on_b"],   width=1, theme_key="curve_on_b")
+        self.plot.add("Δ — сессия A",  f_a, diff_a,             t["curve_diff_a"], width=2, theme_key="curve_diff_a")
+        self.plot.add("Δ — сессия B",  f_b, diff_b,             t["curve_diff_b"], width=2, theme_key="curve_diff_b")
 
         x_min = min(float(f_a.min()), float(f_b.min()))
         x_max = max(float(f_a.max()), float(f_b.max()))
@@ -1784,9 +1784,9 @@ class MainWindow(QMainWindow):
         self.plot.btn_mark_mode.setVisible(False)
         self.plot.btn_clear_marks.setVisible(False)
         self.plot.set_freq_range(x_min, x_max)
-        self.plot.add("ON (Test)",    f_mhz, on.amplitudes_db,  self._theme["curve_on"], width=0.8)
-        self.plot.add("OFF (Noise)",  f_mhz, off.amplitudes_db, self._theme["curve_off"], width=0.8)
-        self.plot.add("Difference",   f_mhz, diff,              self._theme["curve_diff"], width=0.8)
+        self.plot.add("ON (Test)",   f_mhz, on.amplitudes_db,  self._theme["curve_on"],   width=0.8, theme_key="curve_on")
+        self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, self._theme["curve_off"],  width=0.8, theme_key="curve_off")
+        self.plot.add("Difference",  f_mhz, diff,              self._theme["curve_diff"], width=0.8, theme_key="curve_diff")
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
 
         if self.wf and hasattr(self.wf, "signals"):
