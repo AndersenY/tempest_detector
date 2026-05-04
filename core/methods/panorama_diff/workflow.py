@@ -134,17 +134,34 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
             )
 
             # --- ЭТАП 2: СИГНАЛ (ON) И ПОИСК ---
-            self.on_status("ЭТАП 2: ПОИСК СИГНАЛОВ ПЭМИН")
-            self.on_progress(30)
+            n_rep = max(1, self.cfg.on_repeat_count)
+            min_votes = min(n_rep, max(1, self.cfg.on_repeat_min_votes))
 
-            on_spec = self.ctrl.capture_spectrum()
+            captures: list[tuple] = []
+            for rep in range(n_rep):
+                if self._stop_flag:
+                    raise InterruptedError("Stopped")
+                if n_rep > 1:
+                    self.on_status(f"ЭТАП 2: ЗАХВАТ ON {rep + 1}/{n_rep}...")
+                else:
+                    self.on_status("ЭТАП 2: ПОИСК СИГНАЛОВ ПЭМИН")
+                self.on_progress(30 + int((rep / n_rep) * 20))
+                spec_i = self.ctrl.capture_spectrum()
+                diff_i = self.proc.subtract(spec_i, off_spec)
+                cands_i = self.proc.detect(diff_i, spec_i)
+                captures.append((spec_i, diff_i, cands_i))
+
+            on_spec, diff, _ = captures[-1]
             self.on_progress(50)
 
             self.on_status("АНАЛИЗ СПЕКТРА...")
-            diff = self.proc.subtract(on_spec, off_spec)
             self.on_data(on_spec, off_spec, diff)
 
-            self._signals = self.proc.detect(diff, on_spec)
+            if n_rep == 1:
+                self._signals = captures[0][2]
+            else:
+                self._signals = self._vote_candidates(captures, min_votes, on_spec, diff)
+
             self._merge_bookmark_candidates(on_spec, off_spec)
             self.on_signal_updated()   # обновить маркеры на графике сразу после обнаружения
             self.on_progress(70)
@@ -252,6 +269,50 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
             self.on_status(f"ОШИБКА: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def _vote_candidates(self, captures: list, min_votes: int,
+                          ref_on: Spectrum, ref_diff: np.ndarray) -> list[PEMINSignal]:
+        """Возвращает только кандидатов, найденных в ≥ min_votes захватах ON."""
+        tol_hz = max(ref_on.rbw_hz * 3, self.cfg.min_separation_hz * 0.5)
+
+        # Собрать частоты кандидатов из каждого захвата
+        freq_sets: list[list[float]] = [
+            [s.frequency_hz for s in cands] for _, _, cands in captures
+        ]
+
+        # Для каждого кандидата из последнего захвата посчитать голоса
+        _, _, last_cands = captures[-1]
+        voted: list[PEMINSignal] = []
+        for sig in last_cands:
+            votes = sum(
+                1 for freqs in freq_sets
+                if any(abs(f - sig.frequency_hz) <= tol_hz for f in freqs)
+            )
+            if votes >= min_votes:
+                voted.append(sig)
+
+        # Кандидаты из более ранних захватов, не попавшие в последний, тоже
+        # могут набрать нужное число голосов — добавляем и их.
+        covered_freqs = [s.frequency_hz for s in voted]
+        for (_, _, cands_i) in captures[:-1]:
+            for sig in cands_i:
+                if any(abs(sig.frequency_hz - f) <= tol_hz for f in covered_freqs):
+                    continue  # уже представлен
+                votes = sum(
+                    1 for freqs in freq_sets
+                    if any(abs(f - sig.frequency_hz) <= tol_hz for f in freqs)
+                )
+                if votes >= min_votes:
+                    # Пересчитать amplitude относительно ref_diff
+                    idx = int(np.argmin(np.abs(ref_on.frequencies_hz - sig.frequency_hz)))
+                    sig.spectrum_index = idx
+                    sig.amplitude_diff_db = float(ref_diff[idx])
+                    sig.amplitude_on_db = float(ref_on.amplitudes_db[idx])
+                    sig.amplitude_off_db = float(ref_on.amplitudes_db[idx] - ref_diff[idx])
+                    voted.append(sig)
+                    covered_freqs.append(sig.frequency_hz)
+
+        return voted
 
     def _merge_bookmark_candidates(self, on_spec: Spectrum, off_spec: Spectrum) -> None:
         """Добавляет помеченные частоты как кандидатов, если auto-detect их не нашёл."""

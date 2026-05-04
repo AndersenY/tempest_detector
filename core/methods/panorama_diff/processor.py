@@ -13,8 +13,18 @@ class PanoramaProcessor:
             raise ValueError("Размеры спектров ON и OFF не совпадают")
         return on.amplitudes_db - off.amplitudes_db
 
+    def effective_threshold(self, diff_db: np.ndarray) -> float:
+        """Порог с адаптацией к уровню шума: max(fixed, median + k·MAD_sigma)."""
+        if not self.cfg.use_adaptive_threshold:
+            return self.cfg.threshold_db
+        median = float(np.median(diff_db))
+        mad = float(np.median(np.abs(diff_db - median)))
+        adaptive = median + self.cfg.adaptive_threshold_sigma * 1.4826 * mad
+        return max(self.cfg.threshold_db, adaptive)
+
     def detect(self, diff_db: np.ndarray, on: Spectrum) -> List[PEMINSignal]:
-        above_indices = np.where(diff_db > self.cfg.threshold_db)[0]
+        threshold = self.effective_threshold(diff_db)
+        above_indices = np.where(diff_db > threshold)[0]
         if not above_indices.size:
             return []
 
@@ -59,7 +69,10 @@ class PanoramaProcessor:
                 current_group = [indices[i]]
         groups.append(current_group)
 
+        min_bins = max(1, self.cfg.min_cluster_bins)
         for group in groups:
+            if len(group) < min_bins:
+                continue
             for start in range(0, len(group), 3):
                 chunk = group[start:start + 3]
                 if not chunk:
