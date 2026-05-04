@@ -750,13 +750,19 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.ctrl.close()
-        except Exception:
-            pass
-        try:
-            self.ctrl = RtlSdrBackend()
-            self.ctrl.connect()
-            self.ctrl.configure(self.cfg)
+            # Если устройство уже открыто — только переконфигурируем.
+            # close() → open() в librtlsdr вызывает повреждение кучи (malloc corruption),
+            # потому что внутренние USB-потоки не успевают завершиться.
+            if isinstance(self.ctrl, RtlSdrBackend) and self.ctrl.is_connected:
+                self.ctrl.configure(self.cfg)
+            else:
+                try:
+                    self.ctrl.close()
+                except Exception:
+                    pass
+                self.ctrl = RtlSdrBackend()
+                self.ctrl.connect()
+                self.ctrl.configure(self.cfg)
             self._start_panorama_preview()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка подключения", str(e))
@@ -1065,6 +1071,9 @@ class MainWindow(QMainWindow):
         # Восстанавливаем метки после clear() — нужны на графике во время фазы 1
         self.plot.set_panorama_marks([f / 1e6 for f in self._bookmark_freqs_hz])
         self.plot.reset_zoom()
+        # Показываем кнопки меток — пользователь может добавлять частоты в ЭТАП 1
+        self.plot.btn_mark_mode.setVisible(True)
+        self.plot.btn_clear_marks.setVisible(True)
 
     def _on_table_selection_changed(self):
         if not self.table.selectedItems():
@@ -1456,6 +1465,8 @@ class MainWindow(QMainWindow):
         self._bookmark_freqs_hz.clear()
         self.plot.clear()
         self.plot.clear_panorama_marks()
+        self.plot.btn_mark_mode.setVisible(True)
+        self.plot.btn_clear_marks.setVisible(True)
         self.table.setRowCount(0)
         self._reset_progress()
         self._stop_zero_span()
@@ -1508,6 +1519,8 @@ class MainWindow(QMainWindow):
         freq_hz = freq_mhz * 1e6
         if not any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
             self._bookmark_freqs_hz.append(freq_hz)
+            if self.wf is not None and hasattr(self.wf, "update_bookmark_candidates"):
+                self.wf.update_bookmark_candidates(self._bookmark_freqs_hz)
         self._refresh_bookmark_table()
 
     def _refresh_bookmark_table(self) -> None:
@@ -1604,6 +1617,9 @@ class MainWindow(QMainWindow):
         x_min, x_max = float(f_mhz.min()), float(f_mhz.max())
 
         self.plot.clear()
+        # Скрываем кнопки меток — метки уже переданы в workflow, дальше они не нужны
+        self.plot.btn_mark_mode.setVisible(False)
+        self.plot.btn_clear_marks.setVisible(False)
         self.plot.set_freq_range(x_min, x_max)
         self.plot.add("ON (Test)", f_mhz, on.amplitudes_db, "y")
         self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, "#39FF14", width=0.8)

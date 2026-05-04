@@ -101,6 +101,10 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
             self.on_user_action_needed(title, desc, btn)
             self._wait_for_user()
 
+    def update_bookmark_candidates(self, freqs_hz) -> None:
+        """Обновить список помеченных частот (можно вызывать во время паузы ЭТАП 1)."""
+        self._preset_candidates_hz = list(freqs_hz)
+
     def resume(self):
         self._pause_event.set()
 
