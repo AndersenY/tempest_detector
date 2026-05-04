@@ -1045,6 +1045,12 @@ class MainWindow(QMainWindow):
             self._refresh_bookmark_table()
 
     def _start_simulator(self):
+        # Явно закрываем старый бэкенд: без этого GC вызовет rtlsdr_close() позднее,
+        # что даёт "Reattached kernel driver" + usb_claim_interface error -6 при реконнекте.
+        try:
+            self.ctrl.close()
+        except Exception:
+            pass
         sim = DemoSimulator()
         sim.configure(self.cfg)
         sim._MEASURE_DELAY_S = 0.0
