@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFra
 from PyQt6.QtCore import Qt, pyqtSignal
 import pyqtgraph as pg
 import numpy as np
-from typing import List
+from gui.theme import DARK
 
 
 class SpectrumPlotWidget(QWidget):
@@ -14,6 +14,7 @@ class SpectrumPlotWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._theme = DARK
 
         self.plot = pg.PlotWidget()
         self.plot.setBackground("#2b2b2b")
@@ -34,12 +35,7 @@ class SpectrumPlotWidget(QWidget):
         self.plot.setAntialiasing(True)
 
         self.legend = self.plot.addLegend(offset=(10, 10))
-        if self.legend:
-            self.legend.setBrush(pg.mkBrush(50, 50, 50, 200))
-            try:
-                self.legend.labelTextColor = (255, 255, 255)
-            except AttributeError:
-                pass
+        self._apply_legend_theme(self._theme)
 
         _btn_style = """
             QPushButton { background-color: #555; color: white; border: none;
@@ -114,17 +110,17 @@ class SpectrumPlotWidget(QWidget):
         """)
         self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("color: #555;")
-        sep.setFixedWidth(1)
+        self._sep = QFrame()
+        self._sep.setFrameShape(QFrame.Shape.VLine)
+        self._sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._sep.setStyleSheet("color: #555;")
+        self._sep.setFixedWidth(1)
 
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
         panel_layout.addWidget(self.btn_mark_mode)
         panel_layout.addWidget(self.btn_clear_marks)
-        panel_layout.addWidget(sep)
+        panel_layout.addWidget(self._sep)
         panel_layout.addWidget(self.btn_fullscreen)
         # panel_layout.addWidget(self.btn_highlight)
 
@@ -190,6 +186,75 @@ class SpectrumPlotWidget(QWidget):
         zoom_w = self.zoom_panel.width()
         zoom_h = self.zoom_panel.height()
         self.zoom_panel.move(self.width() - zoom_w - 40, self.height() - zoom_h - 60)
+
+    # ------------------------------------------------------------------
+    # Тема оформления
+    # ------------------------------------------------------------------
+
+    def _apply_legend_theme(self, t: dict) -> None:
+        if not self.legend:
+            return
+        r, g, b, a = t["legend_brush"]
+        self.legend.setBrush(pg.mkBrush(r, g, b, a))
+        self.legend.setPen(pg.mkPen(t["border_input"]))
+        try:
+            self.legend.labelTextColor = t["text_axis"]
+        except AttributeError:
+            pass
+        try:
+            for _sample, label in self.legend.items:
+                label.setColor(t["text_axis"])
+        except Exception:
+            pass
+
+    def apply_theme(self, t: dict) -> None:
+        self._theme = t
+        self.plot.setBackground(t["bg_plot"])
+        pi = self.plot.getPlotItem()
+        s = {"color": t["text_axis"], "font-size": "12px"}
+        pi.setLabel("left",   "Уровень, дБ",  **s)
+        pi.setLabel("bottom", "Частота, МГц", **s)
+        pi.setTitle("Панорама спектра", color=t["text_axis"])
+        for name in ("left", "bottom"):
+            ax = pi.getAxis(name)
+            ax.setTextPen(pg.mkPen(t["text_axis"]))
+            ax.setPen(pg.mkPen(t["axis_pen"]))
+        self._apply_legend_theme(t)
+
+        btn = (
+            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg']}; border: none;"
+            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        )
+        self.control_panel.setStyleSheet(
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
+        )
+        self.btn_auto_scale.setStyleSheet(btn)
+        self.btn_markers.setStyleSheet(
+            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg_off']}; border: none;"
+            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
+            f" QPushButton:checked {{ background-color: #2E7D32; color: white; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        )
+        self.btn_mark_mode.setStyleSheet(
+            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg_off']}; border: none;"
+            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
+            f" QPushButton:checked {{ background-color: #E65100; color: white; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        )
+        self.btn_clear_marks.setStyleSheet(btn)
+        self.btn_fullscreen.setStyleSheet(
+            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['text_dim']}; border: none;"
+            f" padding: 2px; border-radius: 3px; font-size: 14px; }}"
+            f" QPushButton:checked {{ background-color: #2E7D32; color: white; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        )
+        self._sep.setStyleSheet(f"color: {t['sep']};")
+        self.zoom_panel.setStyleSheet(
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
+        )
+        self.btn_zoom_in.setStyleSheet(btn)
+        self.btn_zoom_out.setStyleSheet(btn)
 
     def _on_marker_toggle(self, checked: bool):
         self.markers_visible = checked
@@ -338,8 +403,7 @@ class SpectrumPlotWidget(QWidget):
         self._highlight_line = None
         self.threshold_line = None
         self.legend = self.plot.addLegend(offset=(10, 10))
-        if self.legend:
-            self.legend.setBrush(pg.mkBrush(50, 50, 50, 200))
+        self._apply_legend_theme(self._theme)
         # Сброс режима меток
         self.btn_mark_mode.blockSignals(True)
         self.btn_mark_mode.setChecked(False)

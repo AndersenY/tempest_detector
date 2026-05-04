@@ -3,6 +3,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from gui.theme import DARK
 
 
 class LiveWidget(QWidget):
@@ -33,6 +34,7 @@ class LiveWidget(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        self._theme = DARK
         self._peak_hold:      np.ndarray | None = None
         self._ema_spectrum:   np.ndarray | None = None
         self._ema_buf:        np.ndarray | None = None   # буфер для in-place EMA
@@ -71,13 +73,13 @@ class LiveWidget(QWidget):
         self._build_zoom_panel()
         layout.addWidget(self._pw)
 
-    @staticmethod
-    def _make_button_style(checked_bg: str | None = None) -> str:
-        color = "#aaa" if checked_bg else "white"
+    def _make_button_style(self, checked_bg: str | None = None) -> str:
+        t = self._theme
+        fg = t["btn_fg_off"] if checked_bg else t["btn_fg"]
         style = (
-            f"QPushButton {{ background-color: #555; color: {color}; border: none;"
+            f"QPushButton {{ background-color: {t['btn_bg']}; color: {fg}; border: none;"
             f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
-            f" QPushButton:hover {{ background-color: #777; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
         )
         if checked_bg:
             style += f" QPushButton:checked {{ background-color: {checked_bg}; color: white; }}"
@@ -198,10 +200,11 @@ class LiveWidget(QWidget):
         self.btn_resume_live.clicked.connect(self.resume_requested)
         self.btn_resume_live.setVisible(False)
 
+        self._sep_cp = self._make_separator()
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
                   self.btn_mark, self.btn_clear_marks):
             cp.addWidget(w)
-        cp.addWidget(self._make_separator())
+        cp.addWidget(self._sep_cp)
         for w in (self.btn_fullscreen, self.btn_stop_live, self.btn_resume_live):
             cp.addWidget(w)
 
@@ -227,9 +230,10 @@ class LiveWidget(QWidget):
         self.lbl_fps = QLabel("—")
         self.lbl_fps.setStyleSheet("color: #666; font-size: 11px; min-width: 45px;")
 
+        self._sep_zp = self._make_separator()
         zp.addWidget(self.btn_zoom_in)
         zp.addWidget(self.btn_zoom_out)
-        zp.addWidget(self._make_separator())
+        zp.addWidget(self._sep_zp)
         zp.addWidget(self.lbl_fps)
 
     def _reposition_panels(self) -> None:
@@ -248,6 +252,58 @@ class LiveWidget(QWidget):
     def closeEvent(self, event) -> None:
         self._range_timer.stop()
         super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+    # Тема оформления
+    # ------------------------------------------------------------------
+
+    def apply_theme(self, t: dict) -> None:
+        self._theme = t
+        self._pw.setBackground(t["bg_plot"])
+        pi = self._pw.getPlotItem()
+        s = {"color": t["text_axis"], "font-size": "12px"}
+        pi.setLabel("left",   "Уровень, дБ",  **s)
+        pi.setLabel("bottom", "Частота, МГц", **s)
+        pi.setTitle("Прямой эфир", color=t["text_axis"])
+        for name in ("left", "bottom"):
+            ax = pi.getAxis(name)
+            ax.setTextPen(pg.mkPen(t["text_axis"]))
+            ax.setPen(pg.mkPen(t["axis_pen"]))
+        if self.legend:
+            r, g, b, a = t["legend_brush"]
+            self.legend.setBrush(pg.mkBrush(r, g, b, a))
+
+        btn = self._make_button_style()
+        self.control_panel.setStyleSheet(
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
+        )
+        self.btn_auto_scale.setStyleSheet(btn)
+        self.btn_peak.setStyleSheet(self._make_button_style("#2E7D32"))
+        self.btn_reset_peak.setStyleSheet(btn)
+        self.btn_mark.setStyleSheet(self._make_button_style("#E65100"))
+        self.btn_clear_marks.setStyleSheet(btn)
+        self.btn_fullscreen.setStyleSheet(
+            self._make_button_style("#2E7D32").replace("padding: 4px 8px", "padding: 2px")
+            + " font-size: 14px;"
+        )
+        self.btn_stop_live.setStyleSheet(
+            f"QPushButton {{ background-color: #C62828; color: white; border: none;"
+            f" padding: 2px; border-radius: 3px; font-size: 12px; }}"
+            f" QPushButton:hover {{ background-color: #B71C1C; }}"
+        )
+        self.btn_resume_live.setStyleSheet(
+            f"QPushButton {{ background-color: #2E7D32; color: white; border: none;"
+            f" padding: 2px; border-radius: 3px; font-size: 12px; }}"
+            f" QPushButton:hover {{ background-color: #1B5E20; }}"
+        )
+        self._sep_cp.setStyleSheet(f"color: {t['sep']};")
+        self.zoom_panel.setStyleSheet(
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
+        )
+        self.btn_zoom_in.setStyleSheet(btn)
+        self.btn_zoom_out.setStyleSheet(btn)
+        self._sep_zp.setStyleSheet(f"color: {t['sep']};")
+        self.lbl_fps.setStyleSheet(f"color: {t['fps_fg']}; font-size: 11px; min-width: 45px;")
 
     # ------------------------------------------------------------------
     # Публичный API

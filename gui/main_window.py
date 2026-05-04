@@ -22,6 +22,7 @@ from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 from gui.expert_panel import ExpertPanel
 from gui.zero_span_widget import ZeroSpanWidget
 from gui.live_widget import LiveWidget
+from gui.theme import DARK, LIGHT
 from core.live_worker import LiveWorker
 
 
@@ -71,6 +72,7 @@ class MainWindow(QMainWindow):
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px 0 5px; }
         """)
 
+        self._theme = DARK
         self.cfg = PanoramaConfig()
         self.ctrl: BaseInstrument = RtlSdrBackend()
         self.wf = None
@@ -96,6 +98,7 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._setup_menu_bar()
         self._update_remote_status(0)
+        self.apply_theme(DARK)
 
     def _setup_menu_bar(self):
         mb = self.menuBar()
@@ -186,6 +189,24 @@ class MainWindow(QMainWindow):
         self.act_export_spectrum.triggered.connect(self._export_spectrum)
         menu_action.addAction(self.act_export_spectrum)
 
+        # ── Вид ───────────────────────────────────────────────────────
+        menu_view = mb.addMenu("Вид")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+
+        self.act_theme_dark = QAction("Тёмная тема", self)
+        self.act_theme_dark.setCheckable(True)
+        self.act_theme_dark.setChecked(True)
+        self.act_theme_dark.triggered.connect(lambda: self.apply_theme(DARK))
+        theme_group.addAction(self.act_theme_dark)
+        menu_view.addAction(self.act_theme_dark)
+
+        self.act_theme_light = QAction("Светлая тема", self)
+        self.act_theme_light.setCheckable(True)
+        self.act_theme_light.triggered.connect(lambda: self.apply_theme(LIGHT))
+        theme_group.addAction(self.act_theme_light)
+        menu_view.addAction(self.act_theme_light)
+
     def _set_scan_mode(self, mode: str):
         self.scan_mode = mode
         if mode == "full":
@@ -200,6 +221,120 @@ class MainWindow(QMainWindow):
             self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
         # Колонка «Гармоники» — только для harmonic-режима
         self.table.setColumnHidden(4, mode != "harmonic")
+
+    # ------------------------------------------------------------------
+    # Тема оформления
+    # ------------------------------------------------------------------
+
+    def apply_theme(self, t: dict) -> None:
+        self._theme = t
+
+        # Главное окно + QGroupBox глобально
+        self.setStyleSheet(
+            f"QMainWindow {{ background-color: {t['bg_window']}; }}"
+            f" QGroupBox {{ font-weight: bold; border: 1px solid {t['border']};"
+            f" border-radius: 5px; margin-top: 10px; padding-top: 10px; color: {t['text']}; }}"
+            f" QGroupBox::title {{ subcontrol-origin: margin; left: 10px;"
+            f" padding: 0 5px 0 5px; }}"
+        )
+
+        # Меню
+        self.menuBar().setStyleSheet(
+            f"QMenuBar {{ background-color: {t['mb_bg']}; color: {t['mb_fg']}; }}"
+            f" QMenuBar::item:selected {{ background-color: {t['mb_sel']}; }}"
+            f" QMenu {{ background-color: {t['menu_bg']}; color: {t['mb_fg']};"
+            f" border: 1px solid {t['menu_bdr']}; }}"
+            f" QMenu::item:selected {{ background-color: {t['menu_sel']}; }}"
+            f" QMenu::separator {{ height: 1px; background: {t['menu_bdr']}; margin: 3px 0; }}"
+        )
+
+        # Прогресс-бар
+        self.prog.setStyleSheet(
+            f"QProgressBar {{ border: 1px solid {t['border']}; border-radius: 4px;"
+            f" text-align: center; color: {t['text']}; background-color: {t['bg_progress']}; }}"
+            f" QProgressBar::chunk {{ background-color: #2196F3; width: 10px; margin: 0.5px; }}"
+        )
+
+        # Кнопка сброс
+        self.btn_stop.setStyleSheet(
+            f"QPushButton {{ background-color: #D32F2F; color: white; font-weight: bold;"
+            f" padding: 5px 15px; border-radius: 4px; }}"
+            f" QPushButton:hover {{ background-color: #B71C1C; }}"
+            f" QPushButton:disabled {{ background-color: {t['btn_bg']}; color: {t['text_off']}; }}"
+        )
+
+        # Таблица результатов
+        self.table.setStyleSheet(
+            f"QTableWidget {{ background-color: {t['bg_table']};"
+            f" alternate-background-color: {t['bg_table_alt']};"
+            f" color: {t['text']}; gridline-color: {t['border']};"
+            f" border: 1px solid {t['border']}; }}"
+            f" QHeaderView::section {{ background-color: {t['bg_header']}; color: {t['text']};"
+            f" padding: 4px; border: 1px solid {t['border']}; font-weight: bold; }}"
+            f" QTableWidget::item:selected {{ background-color: #2196F3; color: white; }}"
+        )
+
+        # Панель инструкции
+        self.lbl_instruction.setStyleSheet(
+            f"color: {t['text']}; font-size: 13px; padding: 10px;"
+            f" background-color: {t['bg_instruction']}; border: 1px solid {t['border']};"
+            f" border-radius: 4px;"
+        )
+
+        # Панель удалённого управления
+        self._remote_box.setStyleSheet(
+            f"QGroupBox {{ font-weight: bold; border: 1px solid {t['border']};"
+            f" border-radius: 4px; margin-top: 8px; padding-top: 6px;"
+            f" color: {t['remote_title']}; font-size: 11px; }}"
+            f" QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 4px; }}"
+            f" QLabel {{ color: {t['text_dim']}; font-size: 11px; }}"
+            f" QSpinBox, QComboBox {{ background: {t['bg_input']}; color: {t['text']};"
+            f" border: 1px solid {t['border_input']}; border-radius: 3px; padding: 1px 3px; }}"
+            f" QComboBox::drop-down {{ border: none; }}"
+            f" QComboBox QAbstractItemView {{ background: {t['bg_widget']}; color: {t['text']};"
+            f" selection-background-color: {t['mb_sel']}; }}"
+        )
+        self._lbl_remote_addr.setStyleSheet(
+            f"color: {t['remote_addr']}; font-family: monospace;"
+        )
+        # restore spinbox (overridden by remote_box QSS, but keep explicit for min-width)
+        self._spin_settle.setStyleSheet(
+            f"QSpinBox {{ background: {t['bg_input']}; color: {t['text']};"
+            f" border: 1px solid {t['border_input']};"
+            f" border-radius: 3px; padding: 1px 3px; min-width: 75px; }}"
+        )
+
+        # Панель параметров
+        self._settings_panel.setStyleSheet(
+            f"QGroupBox {{ font-weight: bold; border: 1px solid {t['border']};"
+            f" border-radius: 5px; margin-top: 10px; padding-top: 8px; color: {t['text']}; }}"
+            f" QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}"
+            f" QDoubleSpinBox, QSpinBox {{ background-color: {t['bg_input']}; color: {t['text']};"
+            f" border: 1px solid {t['border_input']}; border-radius: 3px;"
+            f" padding: 2px 4px; min-width: 70px; }}"
+            f" QLabel {{ color: {t['text_dim']}; font-size: 12px; }}"
+            f" QCheckBox {{ color: {t['text_dim']}; font-size: 12px; }}"
+        )
+        self.spin_avg.setStyleSheet(
+            f"QSpinBox {{ background-color: {t['bg_input']}; color: {t['text']};"
+            f" border: 1px solid {t['border_input']}; border-radius: 3px;"
+            f" padding: 2px 4px; min-width: 55px; }}"
+        )
+
+        # Кнопка действия
+        self.btn_action.setStyleSheet(
+            f"QPushButton {{ background-color: #2196F3; color: white; font-weight: bold;"
+            f" padding: 12px; border-radius: 4px; font-size: 14px; border: none; }}"
+            f" QPushButton:hover {{ background-color: #1976D2; }}"
+            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
+            f" color: {t['text_off']}; }}"
+        )
+
+        # Дочерние виджеты с pyqtgraph
+        self.plot.apply_theme(t)
+        self.live_widget.apply_theme(t)
+        self.zero_span_widget.apply_theme(t)
+        self.expert_panel.apply_theme(t)
 
     def _init_ui(self):
         w = QWidget()
@@ -342,7 +477,8 @@ class MainWindow(QMainWindow):
             QComboBox QAbstractItemView { background:#2b2b2b; color:#e0e0e0;
                                           selection-background-color:#444; }
         """
-        remote_box = QGroupBox("Удалённое управление")
+        self._remote_box = QGroupBox("Удалённое управление")
+        remote_box = self._remote_box
         remote_box.setStyleSheet(_remote_style)
         remote_inner = QVBoxLayout(remote_box)
         remote_inner.setSpacing(5)
@@ -1485,17 +1621,20 @@ class MainWindow(QMainWindow):
         self.expert_panel.enable_remeasure(False)
 
         self.lbl_instruction.setText("Подключите SDR для начала работы.")
+        t = self._theme
         self.lbl_instruction.setStyleSheet(
-            "color: #e0e0e0; font-size: 13px; padding: 10px;"
-            "background-color: #2b2b2b; border: 1px solid #444; border-radius: 4px;"
+            f"color: {t['text']}; font-size: 13px; padding: 10px;"
+            f" background-color: {t['bg_instruction']}; border: 1px solid {t['border']};"
+            f" border-radius: 4px;"
         )
         self._set_scan_mode(self.scan_mode)   # восстанавливает текст кнопки
-        self.btn_action.setStyleSheet("""
-            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
-                          padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
-            QPushButton:hover { background-color: #1976D2; }
-            QPushButton:disabled { background-color: #444; color: #888; }
-        """)
+        self.btn_action.setStyleSheet(
+            f"QPushButton {{ background-color: #2196F3; color: white; font-weight: bold;"
+            f" padding: 12px; border-radius: 4px; font-size: 14px; border: none; }}"
+            f" QPushButton:hover {{ background-color: #1976D2; }}"
+            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
+            f" color: {t['text_off']}; }}"
+        )
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.act_save.setEnabled(False)
@@ -1597,7 +1736,9 @@ class MainWindow(QMainWindow):
         self._lbl_remote_addr.setText(self._remote_server.local_address)
         if count == 0:
             self._lbl_remote_clients.setText("● Нет подключений")
-            self._lbl_remote_clients.setStyleSheet("color:#888;")
+            self._lbl_remote_clients.setStyleSheet(
+                f"color: {self._theme['clients_off']};"
+            )
         else:
             noun = "клиент" if count == 1 else ("клиента" if count < 5 else "клиентов")
             self._lbl_remote_clients.setText(f"● {count} {noun}")

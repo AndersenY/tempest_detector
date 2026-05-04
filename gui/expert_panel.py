@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.backends import BaseInstrument
 from core.models import PEMINSignal
 from core.signal_processor import find_peak_in_window
+from gui.theme import DARK
 
 
 # ---------------------------------------------------------------------------
@@ -66,32 +67,10 @@ class ExpertPanel(QGroupBox):
     zero_span_started = pyqtSignal(float)  # freq_hz — запрос на старт Zero Span
     zero_span_stopped = pyqtSignal()       # запрос на остановку Zero Span
 
-    _BTN = """
-        QPushButton {
-            background-color: #3a3a3a; color: #e0e0e0; border: 1px solid #555;
-            border-radius: 3px; padding: 4px 8px; font-size: 12px;
-        }
-        QPushButton:hover   { background-color: #505050; }
-        QPushButton:disabled { background-color: #2a2a2a; color: #666; }
-    """
-    _BTN_ACTIVE = """
-        QPushButton {
-            background-color: #1565C0; color: white; border: none;
-            border-radius: 3px; padding: 4px 8px; font-size: 12px; font-weight: bold;
-        }
-        QPushButton:hover { background-color: #1976D2; }
-    """
-
     def __init__(self, parent=None) -> None:
         super().__init__("Экспертный анализ", parent)
-        self.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold; border: 1px solid #555; border-radius: 5px;
-                margin-top: 10px; padding-top: 8px; color: #e0e0e0;
-            }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-            QLabel { color: #ccc; font-size: 12px; }
-        """)
+        self._theme = DARK
+        self.setStyleSheet(self._groupbox_qss(DARK))
 
         self._signal: PEMINSignal | None = None
         self._signal_idx: int = -1
@@ -100,6 +79,53 @@ class ExpertPanel(QGroupBox):
 
         self._init_ui()
         self._update_display()
+
+    # ------------------------------------------------------------------
+    # Тема оформления
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _groupbox_qss(t: dict) -> str:
+        return (
+            f"QGroupBox {{ font-weight: bold; border: 1px solid {t['border_input']};"
+            f" border-radius: 5px; margin-top: 10px; padding-top: 8px; color: {t['text']}; }}"
+            f" QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}"
+            f" QLabel {{ color: {t['text_dim']}; font-size: 12px; }}"
+        )
+
+    def _btn_qss(self) -> str:
+        t = self._theme
+        return (
+            f"QPushButton {{ background-color: {t['expert_btn_bg']}; color: {t['expert_btn_fg']};"
+            f" border: 1px solid {t['expert_btn_bdr']}; border-radius: 3px;"
+            f" padding: 4px 8px; font-size: 12px; }}"
+            f" QPushButton:hover {{ background-color: {t['expert_btn_hover']}; }}"
+            f" QPushButton:disabled {{ background-color: {t['expert_btn_dis_bg']};"
+            f" color: {t['expert_btn_dis_fg']}; }}"
+        )
+
+    def _btn_active_qss(self) -> str:
+        return (
+            "QPushButton { background-color: #1565C0; color: white; border: none;"
+            " border-radius: 3px; padding: 4px 8px; font-size: 12px; font-weight: bold; }"
+            " QPushButton:hover { background-color: #1976D2; }"
+        )
+
+    def apply_theme(self, t: dict) -> None:
+        self._theme = t
+        self.setStyleSheet(self._groupbox_qss(t))
+        btn = self._btn_qss()
+        for b in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
+            b.setStyleSheet(btn)
+        if self._btn_zero_span.isChecked():
+            self._btn_zero_span.setStyleSheet(self._btn_active_qss())
+        else:
+            self._btn_zero_span.setStyleSheet(btn)
+        self._progress.setStyleSheet(
+            f"QProgressBar {{ border: none; background: {t['bg_input']};"
+            f" border-radius: 3px; }}"
+            f" QProgressBar::chunk {{ background: #2196F3; border-radius: 3px; }}"
+        )
 
     # ------------------------------------------------------------------
     # Публичное API
@@ -132,10 +158,10 @@ class ExpertPanel(QGroupBox):
         self._btn_zero_span.setChecked(active)
         if active:
             self._btn_zero_span.setText("⏹  Стоп Zero Span")
-            self._btn_zero_span.setStyleSheet(self._BTN_ACTIVE)
+            self._btn_zero_span.setStyleSheet(self._btn_active_qss())
         else:
             self._btn_zero_span.setText("▶  Zero Span + Аудио")
-            self._btn_zero_span.setStyleSheet(self._BTN)
+            self._btn_zero_span.setStyleSheet(self._btn_qss())
 
     # ------------------------------------------------------------------
     # Построение UI
@@ -171,8 +197,8 @@ class ExpertPanel(QGroupBox):
         row1 = QHBoxLayout()
         self._btn_essh = QPushButton("Переизм. E(с+ш)")
         self._btn_esh  = QPushButton("Переизм. E(ш)")
-        self._btn_essh.setStyleSheet(self._BTN)
-        self._btn_esh.setStyleSheet(self._BTN)
+        self._btn_essh.setStyleSheet(self._btn_qss())
+        self._btn_esh.setStyleSheet(self._btn_qss())
         self._btn_essh.setToolTip("Захватить N спектров с включённым тестом, взять максимум")
         self._btn_esh.setToolTip("Захватить N спектров без теста, взять максимум")
         self._btn_essh.clicked.connect(lambda: self._start_remeasure("signal"))
@@ -184,8 +210,8 @@ class ExpertPanel(QGroupBox):
         row2 = QHBoxLayout()
         self._btn_peak   = QPushButton("Уточнить частоту (×5)")
         self._btn_manual = QPushButton("Задать вручную…")
-        self._btn_peak.setStyleSheet(self._BTN)
-        self._btn_manual.setStyleSheet(self._BTN)
+        self._btn_peak.setStyleSheet(self._btn_qss())
+        self._btn_manual.setStyleSheet(self._btn_qss())
         self._btn_peak.setToolTip("Найти точный максимум из 5 захватов в окне ±10·RBW")
         self._btn_manual.setToolTip("Вручную задать амплитуду E(с+ш)")
         self._btn_peak.clicked.connect(lambda: self._start_remeasure("peak"))
@@ -197,7 +223,7 @@ class ExpertPanel(QGroupBox):
         # ── Zero Span + аудиомонитор ─────────────────────────────────
         self._btn_zero_span = QPushButton("▶  Zero Span + Аудио")
         self._btn_zero_span.setCheckable(True)
-        self._btn_zero_span.setStyleSheet(self._BTN)
+        self._btn_zero_span.setStyleSheet(self._btn_qss())
         self._btn_zero_span.setToolTip(
             "Непрерывный мониторинг выбранной частоты.\n"
             "График амплитуды vs время + аудиотон для поиска максимума ДН."

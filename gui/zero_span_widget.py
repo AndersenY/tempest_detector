@@ -4,6 +4,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PyQt6.QtCore import Qt
+from gui.theme import DARK
 
 
 class ZeroSpanWidget(QWidget):
@@ -97,6 +98,24 @@ class ZeroSpanWidget(QWidget):
         self._lbl_current.setText("— дБ")
 
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Тема оформления
+    # ------------------------------------------------------------------
+
+    def apply_theme(self, t: dict) -> None:
+        self._lbl_title.setStyleSheet(
+            f"color: {t['zs_title_fg']}; font-size: 13px; font-weight: bold;"
+        )
+        self._lbl_current.setStyleSheet(
+            f"color: {t['zs_level_fg']}; font-size: 16px; font-weight: bold;"
+            f" font-family: monospace;"
+        )
+        self._pw.setBackground(t["bg_zerospan"])
+        self._pw.setLabel("left",   "Уровень, дБ", color=t["zs_axis_fg"], size="11px")
+        self._pw.setLabel("bottom", "Время, с",    color=t["zs_axis_fg"], size="11px")
+        self._pw.getAxis("left").setTextPen(t["zs_axis_fg"])
+        self._pw.getAxis("bottom").setTextPen(t["zs_axis_fg"])
 
     def _refresh(self, current_db: float) -> None:
         t_arr = np.array(self._times)
