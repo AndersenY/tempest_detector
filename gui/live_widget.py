@@ -1,7 +1,7 @@
 import time
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 
@@ -125,6 +125,15 @@ class LiveWidget(QWidget):
 
         self._pw.scene().sigMouseClicked.connect(self._on_plot_click)
 
+    @staticmethod
+    def _make_separator() -> QFrame:
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("color: #555;")
+        sep.setFixedWidth(1)
+        return sep
+
     def _build_control_panel(self) -> None:
         self.control_panel = QWidget(self._pw)
         self.control_panel.setStyleSheet(
@@ -159,9 +168,6 @@ class LiveWidget(QWidget):
         self.btn_clear_marks.setToolTip("Удалить все метки")
         self.btn_clear_marks.clicked.connect(self._on_clear_marks_clicked)
 
-        self.lbl_fps = QLabel("—")
-        self.lbl_fps.setStyleSheet("color: #666; font-size: 11px; min-width: 45px;")
-
         self.btn_fullscreen = QPushButton("⛶")
         self.btn_fullscreen.setCheckable(True)
         self.btn_fullscreen.setFixedSize(28, 28)
@@ -193,8 +199,10 @@ class LiveWidget(QWidget):
         self.btn_resume_live.setVisible(False)
 
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
-                  self.btn_mark, self.btn_clear_marks, self.lbl_fps,
-                  self.btn_fullscreen, self.btn_stop_live, self.btn_resume_live):
+                  self.btn_mark, self.btn_clear_marks):
+            cp.addWidget(w)
+        cp.addWidget(self._make_separator())
+        for w in (self.btn_fullscreen, self.btn_stop_live, self.btn_resume_live):
             cp.addWidget(w)
 
     def _build_zoom_panel(self) -> None:
@@ -216,8 +224,13 @@ class LiveWidget(QWidget):
         self.btn_zoom_out.setStyleSheet(self._make_button_style())
         self.btn_zoom_out.clicked.connect(self._zoom_out)
 
+        self.lbl_fps = QLabel("—")
+        self.lbl_fps.setStyleSheet("color: #666; font-size: 11px; min-width: 45px;")
+
         zp.addWidget(self.btn_zoom_in)
         zp.addWidget(self.btn_zoom_out)
+        zp.addWidget(self._make_separator())
+        zp.addWidget(self.lbl_fps)
 
     def _reposition_panels(self) -> None:
         self.control_panel.adjustSize()

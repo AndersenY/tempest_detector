@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame
 from PyQt6.QtCore import Qt, pyqtSignal
 import pyqtgraph as pg
 import numpy as np
@@ -114,10 +114,17 @@ class SpectrumPlotWidget(QWidget):
         """)
         self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
 
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("color: #555;")
+        sep.setFixedWidth(1)
+
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
         panel_layout.addWidget(self.btn_mark_mode)
         panel_layout.addWidget(self.btn_clear_marks)
+        panel_layout.addWidget(sep)
         panel_layout.addWidget(self.btn_fullscreen)
         # panel_layout.addWidget(self.btn_highlight)
 
