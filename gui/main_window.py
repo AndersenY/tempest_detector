@@ -1784,9 +1784,9 @@ class MainWindow(QMainWindow):
         self.plot.btn_mark_mode.setVisible(False)
         self.plot.btn_clear_marks.setVisible(False)
         self.plot.set_freq_range(x_min, x_max)
-        self.plot.add("ON (Test)",    f_mhz, on.amplitudes_db,  self._theme["curve_on"])
+        self.plot.add("ON (Test)",    f_mhz, on.amplitudes_db,  self._theme["curve_on"], width=0.8)
         self.plot.add("OFF (Noise)",  f_mhz, off.amplitudes_db, self._theme["curve_off"], width=0.8)
-        self.plot.add("Difference",   f_mhz, diff,              self._theme["curve_diff"], width=2)
+        self.plot.add("Difference",   f_mhz, diff,              self._theme["curve_diff"], width=0.8)
         self.plot.set_threshold(self.cfg.threshold_db, [x_min, x_max])
 
         if self.wf and hasattr(self.wf, "signals"):
