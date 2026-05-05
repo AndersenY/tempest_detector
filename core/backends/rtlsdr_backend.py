@@ -11,7 +11,12 @@ class RtlSdrBackend(BaseInstrument):
     """RTL-SDR бэкенд — прямой преемник SDRController."""
 
     _SAFE_SR   = 2_400_000
+    # Порог одиночного захвата: если span ≤ этого значения — один вызов _capture_single.
     _USABLE_BW = 2_000_000
+    # Шаг sweep: тюнер R820T при SR=2.4 МГц даёт спад АЧХ на краях ±1 МГц (~2–5 дБ).
+    # Используем только центральные 1.6 МГц (±0.8 МГц) — гарантированно плоская зона.
+    # Компромисс: на ~25 % больше чанков при широких диапазонах.
+    _SWEEP_STEP_BW = 1_600_000
 
     def __init__(self, device_index: int = 0):
         self._sdr: RtlSdr | None = None
@@ -49,21 +54,24 @@ class RtlSdrBackend(BaseInstrument):
         В pyrtlsdr ВСЕ сеттеры вызывают self.close() при ошибке:
             result = librtlsdr.rtlsdr_set_center_freq(self.dev_p, freq)
             if result < 0:
-                self.close()   ← rtlsdr_close() на мёртвом хендле → segfault
+                self.close()   ← без патча: rtlsdr_close() → segfault / mutex assertion
                 raise LibUSBError(...)
 
-        Патчим close() на инстансе: если устройства нет — только сбрасываем
-        device_opened, не вызывая rtlsdr_close(). Это устраняет segfault
-        независимо от того, какой именно сеттер или read завершился с ошибкой.
+        Патчим close() на инстансе: только сбрасываем device_opened, не вызываем
+        rtlsdr_close(). Вызов rtlsdr_close() после USB-ошибок (-4, -9) приводит к:
+          - segfault "Reattaching kernel driver failed!" при NO_DEVICE
+          - Abort "pthread_mutex_lock assertion" при PIPE error
+
+        Явный rtlsdr_close() делает только RtlSdrBackend.close() в штатном пути
+        остановки, когда устройство в рабочем состоянии.
         """
         sdr = self._sdr
-        idx = self._device_index
 
         def _safe_close():
             if not sdr.device_opened:
                 return
-            if _librtlsdr.rtlsdr_get_device_count() > idx:
-                _librtlsdr.rtlsdr_close(sdr.dev_p)
+            # НЕ вызываем rtlsdr_close() — после любой USB-ошибки это может привести
+            # к crash'у внутри libusb. Явный close делает RtlSdrBackend.close().
             sdr.device_opened = False
 
         sdr.close = _safe_close
@@ -85,10 +93,18 @@ class RtlSdrBackend(BaseInstrument):
 
     def close(self) -> None:
         if self._sdr:
-            try:
-                self._sdr.close()
-            except Exception:
-                pass
+            # Вызываем rtlsdr_close() напрямую, минуя patched self._sdr.close().
+            # self._sdr.close() отключён для безопасности от USB-ошибок;
+            # здесь мы в штатном пути остановки, устройство в рабочем состоянии.
+            if getattr(self._sdr, 'device_opened', False):
+                try:
+                    _librtlsdr.rtlsdr_close(self._sdr.dev_p)
+                except Exception:
+                    pass
+                try:
+                    self._sdr.device_opened = False
+                except Exception:
+                    pass
             self._sdr = None
 
     def abandon_handle(self) -> None:
@@ -215,12 +231,14 @@ class RtlSdrBackend(BaseInstrument):
 
     def _capture_sweep(self, cfg: PanoramaConfig, fast: bool = False) -> Spectrum:
         sr = self._SAFE_SR
-        step = self._USABLE_BW
+        step = self._SWEEP_STEP_BW
         settle_s = self._SWEEP_SETTLE_FAST_S if fast else self._SWEEP_SETTLE_S
 
+        # Первый центр выровнен так, чтобы usable-зона начиналась точно с start_freq_hz.
+        # Старый вариант (start + sr/2) давал пропуск ~200 кГц в начале диапазона.
         centers = []
-        c = cfg.start_freq_hz + sr / 2
-        while c - sr / 2 < cfg.stop_freq_hz:
+        c = cfg.start_freq_hz + step / 2
+        while c - step / 2 < cfg.stop_freq_hz:
             centers.append(c)
             c += step
 
