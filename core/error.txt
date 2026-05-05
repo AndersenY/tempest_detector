@@ -1,0 +1,7 @@
+(sdr) andalebu@andalebu:~/Downloads/Diplom/code/pemin_detector$ python3 main.py 
+Found Rafael Micro R820T tuner
+[R82XX] PLL not locked!
+✅ RTL-SDR подключён
+r82xx_read: i2c rd failed=-9 reg=00 len=3
+r82xx_set_freq: failed=-9
+Segmentation fault (core dumped)

@@ -45,6 +45,21 @@ class RtlSdrBackend(BaseInstrument):
                 pass
             self._sdr = None
 
+    def abandon_handle(self) -> None:
+        """Бросить дескриптор без вызова rtlsdr_close().
+
+        Используется когда устройство физически отключено: вызов rtlsdr_close()
+        на невалидном USB-дескрипторе приводит к segfault ("Reattaching kernel
+        driver failed!"). Обнуление dev_p отключает __del__ в pyrtlsdr.
+        """
+        if self._sdr is None:
+            return
+        try:
+            self._sdr.dev_p = None   # pyrtlsdr.close() проверяет это перед вызовом librtlsdr
+        except Exception:
+            pass
+        self._sdr = None
+
     # RTL-SDR нестабилен при sample rate в диапазоне 300–900 кГц — segfault/PLL fail.
     # При попадании в эту зону принудительно используем ближайшее безопасное значение.
     _SR_DEAD_LOW  = 300_001

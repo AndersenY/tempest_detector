@@ -945,7 +945,16 @@ class MainWindow(QMainWindow):
             # close() → open() в librtlsdr вызывает повреждение кучи (malloc corruption),
             # потому что внутренние USB-потоки не успевают завершиться.
             if isinstance(self.ctrl, RtlSdrBackend) and self.ctrl.is_connected:
-                self.ctrl.configure(self.cfg)
+                try:
+                    self.ctrl.configure(self.cfg)
+                except Exception:
+                    # Устройство было перевоткнуто: дескриптор устарел.
+                    # abandon_handle() сбрасывает dev_p без вызова rtlsdr_close(),
+                    # иначе librtlsdr падает с segfault при "Reattaching kernel driver".
+                    self.ctrl.abandon_handle()
+                    self.ctrl = RtlSdrBackend()
+                    self.ctrl.connect()
+                    self.ctrl.configure(self.cfg)
             else:
                 try:
                     self.ctrl.close()
