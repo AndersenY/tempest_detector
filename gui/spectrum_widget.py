@@ -230,18 +230,34 @@ class SpectrumPlotWidget(QWidget):
 
         pt = vb.mapSceneToView(pos)
         freq_mhz = pt.x()
-        amp_db   = pt.y()
+        mouse_y  = pt.y()
+
+        # Для каждой кривой берём значение в ближайшем бине по X;
+        # выбираем ту кривую, чей Y ближе всего к позиции мыши.
+        best_amp = mouse_y
+        best_dist = float("inf")
+        for curve in self.curves.values():
+            xs, ys = curve.getData()
+            if xs is None or len(xs) < 2:
+                continue
+            idx = int(np.searchsorted(xs, freq_mhz))
+            idx = max(0, min(idx, len(xs) - 1))
+            y = float(ys[idx])
+            dist = abs(y - mouse_y)
+            if dist < best_dist:
+                best_dist = dist
+                best_amp = y
 
         self._cursor_vline.setPos(freq_mhz)
-        self._cursor_hline.setPos(amp_db)
+        self._cursor_hline.setPos(best_amp)
         for line in (self._cursor_vline, self._cursor_hline):
             line.setVisible(True)
 
         x0, x1 = vb.viewRange()[0]
         anchor = (0, 1) if freq_mhz < (x0 + x1) / 2 else (1, 1)
         self._cursor_label.setAnchor(anchor)
-        self._cursor_label.setPos(freq_mhz, amp_db)
-        self._cursor_label.setText(f" {freq_mhz:.3f} МГц\n {amp_db:.1f} дБ")
+        self._cursor_label.setPos(freq_mhz, best_amp)
+        self._cursor_label.setText(f" {freq_mhz:.3f} МГц\n {best_amp:.1f} дБ")
         self._cursor_label.setVisible(True)
 
     def _zoom_in(self):
