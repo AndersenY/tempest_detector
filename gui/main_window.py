@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
                              QProgressBar, QMessageBox, QGroupBox, QHeaderView,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
-                             QCheckBox, QStackedWidget, QComboBox)
+                             QCheckBox, QStackedWidget, QComboBox,
+                             QStyledItemDelegate, QAbstractItemDelegate)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.config import PanoramaConfig
@@ -53,6 +54,91 @@ class Worker(QThread):
             self.error.emit(str(e))
         finally:
             self.finished_signal.emit()
+
+
+class _StatusDelegate(QStyledItemDelegate):
+    """Делегат для колонки «Статус»: редактирование через выпадающий список."""
+
+    _OPTIONS = [
+        ("✅ ПЭМИН",         "#66BB6A", "green"),
+        ("❌ Брак (В1)",      "#EF5350", "red"),
+        ("〇 Внешний (В2)",  "#42A5F5", "blue"),
+        ("〇 Двойной брак",  "#42A5F5", "blue"),
+        ("⏳ В1 OK",          "#FFCA28", "yellow"),
+        ("⏳ Ожидание",       "#9E9E9E", "yellow"),
+        ("📌 Потенциальный",  "#FFCA28", "yellow"),
+        ("❌ Гармоник нет",   "#EF5350", "red"),
+    ]
+
+    # Цвета по умолчанию (тёмная тема); обновляются через set_theme()
+    _bg       = "#2b2b2b"
+    _fg       = "#e0e0e0"
+    _border   = "#555555"
+    _sel_bg   = "#1565C0"   # синий, хорошо виден на тёмном и светлом
+    _sel_fg   = "#ffffff"
+
+    def set_theme(self, t: dict) -> None:
+        self._bg     = t["bg_widget"]
+        self._fg     = t["text"]
+        self._border = t["border_input"]
+        if t["name"] == "dark":
+            self._sel_bg = "#1E88E5"   # яркий синий — хорошо виден на тёмном фоне
+            self._sel_fg = "#ffffff"
+        else:
+            self._sel_bg = "#1565C0"   # насыщенный синий на светлом фоне
+            self._sel_fg = "#ffffff"
+
+    @classmethod
+    def color_for(cls, text: str) -> str:
+        for label, hex_color, _ in cls._OPTIONS:
+            if label in text:
+                return hex_color
+        return "#9E9E9E"
+
+    @classmethod
+    def key_for(cls, text: str) -> str:
+        for label, _, key in cls._OPTIONS:
+            if label in text:
+                return key
+        return "yellow"
+
+    def createEditor(self, parent, option, index):
+        combo = QComboBox(parent)
+        combo.addItems([t for t, _, _ in self._OPTIONS])
+        combo.setStyleSheet(
+            f"QComboBox {{"
+            f" background-color: {self._bg}; color: {self._fg};"
+            f" border: 1px solid {self._border}; padding: 2px 6px; }}"
+            f" QComboBox::drop-down {{ border: none; }}"
+            f" QComboBox QAbstractItemView {{"
+            f" background-color: {self._bg}; color: {self._fg};"
+            f" border: 1px solid {self._border}; outline: none; }}"
+            f" QComboBox QAbstractItemView::item {{"
+            f" padding: 4px 6px; color: {self._fg}; }}"
+            f" QComboBox QAbstractItemView::item:selected {{"
+            f" background-color: {self._sel_bg}; color: {self._sel_fg}; }}"
+            f" QComboBox QAbstractItemView::item:hover {{"
+            f" background-color: {self._sel_bg}; color: {self._sel_fg}; }}"
+        )
+        combo.activated.connect(
+            lambda _: (self.commitData.emit(combo),
+                       self.closeEditor.emit(
+                           combo, QAbstractItemDelegate.EndEditHint.NoHint))
+        )
+        # Открываем выпадающий список сразу после показа редактора (убирает лишний клик)
+        QTimer.singleShot(0, combo.showPopup)
+        return combo
+
+    def setEditorData(self, editor, index):
+        current = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        for i, (text, _, _) in enumerate(self._OPTIONS):
+            if text in current:
+                editor.setCurrentIndex(i)
+                return
+        editor.setCurrentIndex(0)
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.currentText(), Qt.ItemDataRole.DisplayRole)
 
 
 class MainWindow(QMainWindow):
@@ -236,6 +322,7 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self, t: dict) -> None:
         self._theme = t
+        self._status_delegate.set_theme(t)
 
         # Главное окно + QGroupBox глобально
         self.setStyleSheet(
@@ -434,7 +521,14 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setColumnHidden(4, True)   # «Гармоники» — скрыта до активации метода
         self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked |
+            QTableWidget.EditTrigger.EditKeyPressed
+        )
+        self._status_delegate = _StatusDelegate(self.table)
+        self.table.setItemDelegateForColumn(5, self._status_delegate)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
+        self.table.itemChanged.connect(self._on_table_item_changed)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         self.table.setStyleSheet("""
@@ -1129,6 +1223,40 @@ class MainWindow(QMainWindow):
         act_del = menu.addAction("🗑  Удалить метку")
         if menu.exec(self.table.viewport().mapToGlobal(pos)) == act_del:
             self._delete_bookmark(freq_hz)
+
+    # ------------------------------------------------------------------
+    # Редактирование таблицы
+    # ------------------------------------------------------------------
+
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        row = item.row()
+        col = item.column()
+        text = item.text().strip()
+
+        signals = None
+        if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
+            signals = self.wf.signals
+        if signals is None or row >= len(signals):
+            return
+
+        s = signals[row]
+        try:
+            if col == 0:
+                s.frequency_hz = float(text) * 1e6
+            elif col == 1:
+                s.amplitude_diff_db = float(text)
+            elif col == 2:
+                s.amplitude_on_db = float(text)
+            elif col == 3:
+                s.amplitude_off_db = float(text)
+            elif col == 5:
+                color_hex = _StatusDelegate.color_for(text)
+                self.table.blockSignals(True)
+                item.setForeground(QColor(color_hex))
+                self.table.blockSignals(False)
+                s.status_color = _StatusDelegate.key_for(text)
+        except (ValueError, TypeError):
+            pass
 
     def _delete_bookmark(self, freq_hz: float) -> None:
         self._bookmark_freqs_hz = [f for f in self._bookmark_freqs_hz
@@ -1919,6 +2047,10 @@ class MainWindow(QMainWindow):
         COLOR_EXTERNAL = "#42A5F5"
         COLOR_WARN    = "#FFCA28"
 
+        item_flags = (Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                      | Qt.ItemFlag.ItemIsEditable)
+
+        self.table.blockSignals(True)
         self.table.setSortingEnabled(False)
         self.table.setUpdatesEnabled(False)
 
@@ -1926,6 +2058,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(count)
 
         if count == 0:
+            self.table.blockSignals(False)
             self.table.setUpdatesEnabled(True)
             self.table.repaint()
             return
@@ -1943,6 +2076,7 @@ class MainWindow(QMainWindow):
                 item_status.setForeground(QColor(COLOR_WARN))
                 for col, item in enumerate([item_freq, item_diff, item_on,
                                             item_off, item_harm, item_status]):
+                    item.setFlags(item_flags)
                     self.table.setItem(i, col, item)
                 continue
 
@@ -2004,6 +2138,9 @@ class MainWindow(QMainWindow):
             item_status = QTableWidgetItem(status_text)
             item_status.setForeground(QColor(color_hex))
 
+            for col, item in enumerate([item_freq, item_diff, item_on,
+                                        item_off, item_harm, item_status]):
+                item.setFlags(item_flags)
             self.table.setItem(i, 0, item_freq)
             self.table.setItem(i, 1, item_diff)
             self.table.setItem(i, 2, item_on)
@@ -2011,6 +2148,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(i, 4, item_harm)
             self.table.setItem(i, 5, item_status)
 
+        self.table.blockSignals(False)
         self.table.setUpdatesEnabled(True)
         self.table.setSortingEnabled(True)
 
