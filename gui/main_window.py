@@ -841,6 +841,8 @@ class MainWindow(QMainWindow):
 
     def _on_live_resume_requested(self) -> None:
         """Кнопка ▶ на live_widget: перезапускает прямой эфир."""
+        if not self._apply_settings_to_cfg():
+            return
         self._start_panorama_preview()
 
     # ------------------------------------------------------------------
