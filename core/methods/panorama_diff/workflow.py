@@ -53,6 +53,10 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
     def signals(self) -> List[PEMINSignal]:
         return self._signals
 
+    @signals.setter
+    def signals(self, value: List[PEMINSignal]) -> None:
+        self._signals = value
+
     def _wait_for_user(self):
         self._pause_event.clear()
         # Poll with a short timeout so _stop_flag is checked promptly

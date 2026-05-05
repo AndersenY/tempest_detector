@@ -190,7 +190,8 @@ class SpectrumPlotWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_cursor(self) -> None:
-        pen = pg.mkPen("#aaaaaa", width=1, style=Qt.PenStyle.DotLine)
+        t = self._theme
+        pen = pg.mkPen(t["text_muted"], width=1, style=Qt.PenStyle.DotLine)
         self._cursor_vline = pg.InfiniteLine(angle=90, movable=False, pen=pen)
         self._cursor_hline = pg.InfiniteLine(angle=0,  movable=False, pen=pen)
         for line in (self._cursor_vline, self._cursor_hline):
@@ -199,9 +200,10 @@ class SpectrumPlotWidget(QWidget):
             self.plot.addItem(line)
 
         self._cursor_label = pg.TextItem(
-            text="", color="#ffffff",
-            fill=pg.mkBrush(30, 30, 30, 210),
-            border=pg.mkPen("#555555"),
+            text="",
+            color=t["text_axis"],
+            fill=pg.mkBrush(*t["marker_label_fill"]),
+            border=pg.mkPen(t["border_input"]),
             anchor=(0, 1),
         )
         self._cursor_label.setZValue(200)
@@ -217,6 +219,8 @@ class SpectrumPlotWidget(QWidget):
 
     def _on_mouse_moved(self, pos) -> None:
         if not self._cursor_enabled or self._cursor_vline is None:
+            return
+        if not self.curves:
             return
         vb = self.plot.getPlotItem().getViewBox()
         if not vb.sceneBoundingRect().contains(pos):
@@ -340,6 +344,9 @@ class SpectrumPlotWidget(QWidget):
             self._cursor_hline.setPen(cursor_pen)
         if self._cursor_label is not None:
             self._cursor_label.setColor(t["text_axis"])
+            self._cursor_label.fill = pg.mkBrush(*t["marker_label_fill"])
+            self._cursor_label.border = pg.mkPen(t["border_input"])
+            self._cursor_label.update()
         self.btn_fullscreen.setStyleSheet(
             f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['text_dim']}; border: none;"
             f" padding: 2px; border-radius: 3px; font-size: 14px; }}"

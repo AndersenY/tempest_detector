@@ -128,7 +128,8 @@ class LiveWidget(QWidget):
 
         self._pw.scene().sigMouseClicked.connect(self._on_plot_click)
 
-        cursor_pen = pg.mkPen("#aaaaaa", width=1, style=Qt.PenStyle.DotLine)
+        t = self._theme
+        cursor_pen = pg.mkPen(t["text_muted"], width=1, style=Qt.PenStyle.DotLine)
         self._cursor_vline = pg.InfiniteLine(angle=90, movable=False, pen=cursor_pen)
         self._cursor_hline = pg.InfiniteLine(angle=0,  movable=False, pen=cursor_pen)
         for line in (self._cursor_vline, self._cursor_hline):
@@ -137,9 +138,10 @@ class LiveWidget(QWidget):
             pi.addItem(line)
 
         self._cursor_label = pg.TextItem(
-            text="", color="#ffffff",
-            fill=pg.mkBrush(30, 30, 30, 210),
-            border=pg.mkPen("#555555"),
+            text="",
+            color=t["text_axis"],
+            fill=pg.mkBrush(*t["marker_label_fill"]),
+            border=pg.mkPen(t["border_input"]),
             anchor=(0, 1),
         )
         self._cursor_label.setZValue(200)
@@ -348,6 +350,9 @@ class LiveWidget(QWidget):
         self._cursor_vline.setPen(cursor_pen)
         self._cursor_hline.setPen(cursor_pen)
         self._cursor_label.setColor(t["text_axis"])
+        self._cursor_label.fill = pg.mkBrush(*t["marker_label_fill"])
+        self._cursor_label.border = pg.mkPen(t["border_input"])
+        self._cursor_label.update()
         self.btn_fullscreen.setStyleSheet(
             self._make_button_style("#2E7D32").replace("padding: 4px 8px", "padding: 2px")
             + " font-size: 14px;"
@@ -566,7 +571,7 @@ class LiveWidget(QWidget):
             self._cursor_label.setVisible(False)
 
     def _on_mouse_moved(self, pos) -> None:
-        if not self._cursor_enabled:
+        if not self._cursor_enabled or not self._x_initialized:
             return
         vb = self._pw.getPlotItem().getViewBox()
         if not vb.sceneBoundingRect().contains(pos):
