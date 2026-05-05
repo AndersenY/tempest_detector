@@ -105,27 +105,27 @@ class _StatusDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         combo = QComboBox(parent)
         combo.addItems([t for t, _, _ in self._OPTIONS])
+
         combo.setStyleSheet(
-            f"QComboBox {{"
-            f" background-color: {self._bg}; color: {self._fg};"
+            f"QComboBox {{ background-color: {self._bg}; color: {self._fg};"
             f" border: 1px solid {self._border}; padding: 2px 6px; }}"
             f" QComboBox::drop-down {{ border: none; }}"
-            f" QComboBox QAbstractItemView {{"
-            f" background-color: {self._bg}; color: {self._fg};"
-            f" border: 1px solid {self._border}; outline: none; }}"
-            f" QComboBox QAbstractItemView::item {{"
-            f" padding: 4px 6px; color: {self._fg}; }}"
-            f" QComboBox QAbstractItemView::item:selected {{"
-            f" background-color: {self._sel_bg}; color: {self._sel_fg}; }}"
-            f" QComboBox QAbstractItemView::item:hover {{"
+        )
+        combo.view().setStyleSheet(
+            f"QListView {{"
+            f" background-color: {self._bg}; color: {self._fg}; }}"
+            f" QListView::item {{"
+            f" padding: 4px 8px; color: {self._fg};"
+            f" background-color: {self._bg}; }}"
+            f" QListView::item:hover, QListView::item:selected {{"
             f" background-color: {self._sel_bg}; color: {self._sel_fg}; }}"
         )
+
         combo.activated.connect(
             lambda _: (self.commitData.emit(combo),
                        self.closeEditor.emit(
                            combo, QAbstractItemDelegate.EndEditHint.NoHint))
         )
-        # Открываем выпадающий список сразу после показа редактора (убирает лишний клик)
         QTimer.singleShot(0, combo.showPopup)
         return combo
 
