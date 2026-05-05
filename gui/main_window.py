@@ -1119,6 +1119,8 @@ class MainWindow(QMainWindow):
         cfg.fft_size        = 8192
         cfg.averaging_count = 1
         cfg.use_max_hold    = False
+        if self.cfg.fft_size != 8192:
+            cfg.calibration_offset_db += 20.0 * np.log10(self.cfg.fft_size / 8192)
         _LIVE_BW = 2_000_000
         if self.chk_lock_bw.isChecked():
             sender = self.sender()
@@ -1188,6 +1190,8 @@ class MainWindow(QMainWindow):
         cfg.fft_size        = 8192
         cfg.averaging_count = 1
         cfg.use_max_hold    = False
+        if self.cfg.fft_size != 8192:
+            cfg.calibration_offset_db += 20.0 * np.log10(self.cfg.fft_size / 8192)
         self._panorama_preview_worker.update_config(cfg)
 
     def _on_table_context_menu(self, pos) -> None:
@@ -1317,6 +1321,8 @@ class MainWindow(QMainWindow):
         prev_cfg.fft_size = 8192
         prev_cfg.averaging_count = 1
         prev_cfg.use_max_hold = False
+        if self.cfg.fft_size != 8192:
+            prev_cfg.calibration_offset_db += 20.0 * np.log10(self.cfg.fft_size / 8192)
         # При включённой фиксации полосы — ограничиваем SDR hardware-bandwidth (2 МГц),
         # чтобы всегда работал _capture_single без медленного sweep
         _LIVE_BW = 2_000_000   # _USABLE_BW из RtlSdrBackend

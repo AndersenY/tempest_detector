@@ -632,8 +632,11 @@ class SpectrumPlotWidget(QWidget):
                 all_y.append(float(yd.min()))
                 all_y.append(float(yd.max()))
         if all_y:
-            half_span = max(abs(min(all_y)), abs(max(all_y))) * 1.1
-            vb.setYRange(-half_span, half_span, padding=0)
+            y_min = min(all_y)
+            y_max = max(all_y)
+            span = max(y_max - y_min, 20.0)
+            margin = span * 0.1
+            vb.setYRange(y_min - margin, y_max + margin, padding=0)
 
         vb.setXRange(x_min, x_max, padding=0)
 
