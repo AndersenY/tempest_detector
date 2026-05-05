@@ -843,6 +843,46 @@ class MainWindow(QMainWindow):
         """Кнопка ▶ на live_widget: перезапускает прямой эфир."""
         self._start_panorama_preview()
 
+    # ------------------------------------------------------------------
+    # Обработка ошибок SDR-устройства
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_device_lost(msg: str) -> bool:
+        # LibUSBError(-4) форматируется как "<LIBUSB_ERROR_NO_DEVICE (-4): ...>"
+        # LibUSBError(-9) — "<LIBUSB_ERROR_PIPE (-9): ...>"
+        # read_bytes_sync кидает IOError("Error reading N bytes (-4)")
+        # наш _check_device_present кидает IOError("LIBUSB_ERROR_NO_DEVICE (-4): ...")
+        return (
+            "LIBUSB_ERROR_NO_DEVICE" in msg
+            or "LIBUSB_ERROR_PIPE" in msg
+            or "(-4)" in msg
+            or "(-9)" in msg
+            or "Error code -4" in msg
+            or "Error code -9" in msg
+            or "disconnected" in msg.lower()
+        )
+
+    def _on_sdr_error(self, msg: str) -> None:
+        """Единый обработчик ошибок SDR (LiveWorker, WorkflowThread, ZeroSpan).
+
+        При физическом отключении устройства — бросает устаревший USB-дескриптор
+        (без вызова rtlsdr_close, иначе segfault), сбрасывает UI и показывает
+        предупреждение. Для прочих ошибок — сброс + диалог с текстом ошибки.
+        """
+        if self._is_device_lost(msg) and isinstance(self.ctrl, RtlSdrBackend):
+            self.ctrl.abandon_handle()
+        self._reset_to_start()
+        if self._is_device_lost(msg):
+            QMessageBox.warning(
+                self,
+                "Устройство отключено",
+                "RTL-SDR донгл был отключён во время работы.\n\n"
+                "Подключите устройство заново и нажмите Пуск.",
+            )
+        else:
+            QMessageBox.critical(self, "Ошибка измерения", msg)
+
     def _reset_to_start(self):
         """Прерывает текущий процесс и возвращает программу в начальное состояние."""
         self._resetting = True
@@ -1163,9 +1203,7 @@ class MainWindow(QMainWindow):
         self._panorama_preview_worker.spectrum_ready.connect(
             self._on_panorama_preview_spectrum, Q
         )
-        self._panorama_preview_worker.error.connect(
-            lambda e: QMessageBox.critical(self, "Ошибка Preview", e), Q
-        )
+        self._panorama_preview_worker.error.connect(self._on_sdr_error, Q)
         self._panorama_preview_worker.start()
 
         # Подключаем все настройки — изменение → обновление live preview.
@@ -1273,7 +1311,7 @@ class MainWindow(QMainWindow):
         self.thread.off_spectrum_ready.connect(self._on_off_spectrum_ready, Q)
         self.thread.action_needed.connect(self._on_action_needed, Q)
         self.thread.signals_updated.connect(self._refresh_markers, Q)
-        self.thread.error.connect(lambda e: QMessageBox.critical(self, "Ошибка", e), Q)
+        self.thread.error.connect(self._on_sdr_error, Q)
         self.thread.finished_signal.connect(self._on_thread_finished, Q)
 
         self.thread.start()
@@ -1398,9 +1436,12 @@ class MainWindow(QMainWindow):
 
     def _on_zero_span_error(self, msg: str) -> None:
         self._stop_zero_span()
-        self._spectrum_stack.setCurrentIndex(0)
-        self.expert_panel.set_zero_span_active(False)
-        QMessageBox.warning(self, "Zero Span", f"Ошибка измерения:\n{msg}")
+        if self._is_device_lost(msg):
+            self._on_sdr_error(msg)
+        else:
+            self._spectrum_stack.setCurrentIndex(0)
+            self.expert_panel.set_zero_span_active(False)
+            QMessageBox.warning(self, "Zero Span", f"Ошибка измерения:\n{msg}")
 
     def _stop_zero_span(self) -> None:
         if self._zs_worker is not None:

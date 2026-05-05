@@ -269,6 +269,7 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
             self.on_status(f"ОШИБКА: {str(e)}")
             import traceback
             traceback.print_exc()
+            raise   # пробрасываем наверх — Worker.error сигнал должен сработать
 
     def _vote_candidates(self, captures: list, min_votes: int,
                           ref_on: Spectrum, ref_diff: np.ndarray) -> list[PEMINSignal]:

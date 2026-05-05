@@ -1,6 +1,7 @@
 import time
 import numpy as np
 from rtlsdr import RtlSdr
+from rtlsdr import librtlsdr as _librtlsdr
 from .base import BaseInstrument
 from ..config import PanoramaConfig
 from ..models import Spectrum
@@ -25,11 +26,56 @@ class RtlSdrBackend(BaseInstrument):
     def is_connected(self) -> bool:
         return self._sdr is not None
 
+    # ------------------------------------------------------------------
+    # Защита от segfault при физическом отключении устройства
+    # ------------------------------------------------------------------
+
+    def _check_device_present(self) -> None:
+        """Вызвать до любого librtlsdr-вызова требующего открытый хендл.
+
+        rtlsdr_get_device_count() — безопасная функция libusb без хендла.
+        Если устройство вытащили — бросаем IOError с кодом -4 до того как
+        pyrtlsdr успеет вызвать rtlsdr_close() на невалидном хендле.
+        """
+        if _librtlsdr.rtlsdr_get_device_count() <= self._device_index:
+            raise IOError(
+                f"LIBUSB_ERROR_NO_DEVICE (-4): "
+                f"RTL-SDR device {self._device_index} disconnected"
+            )
+
+    def _install_safe_close(self) -> None:
+        """Подменить self._sdr.close() безопасной версией.
+
+        В pyrtlsdr ВСЕ сеттеры вызывают self.close() при ошибке:
+            result = librtlsdr.rtlsdr_set_center_freq(self.dev_p, freq)
+            if result < 0:
+                self.close()   ← rtlsdr_close() на мёртвом хендле → segfault
+                raise LibUSBError(...)
+
+        Патчим close() на инстансе: если устройства нет — только сбрасываем
+        device_opened, не вызывая rtlsdr_close(). Это устраняет segfault
+        независимо от того, какой именно сеттер или read завершился с ошибкой.
+        """
+        sdr = self._sdr
+        idx = self._device_index
+
+        def _safe_close():
+            if not sdr.device_opened:
+                return
+            if _librtlsdr.rtlsdr_get_device_count() > idx:
+                _librtlsdr.rtlsdr_close(sdr.dev_p)
+            sdr.device_opened = False
+
+        sdr.close = _safe_close
+
+    # ------------------------------------------------------------------
+
     def connect(self) -> None:
         try:
             if self._sdr:
                 self.close()
             self._sdr = RtlSdr(device_index=self._device_index)
+            self._install_safe_close()   # защита от segfault при отключении
             print("✅ RTL-SDR подключён")
         except Exception as e:
             raise RuntimeError(
@@ -48,17 +94,20 @@ class RtlSdrBackend(BaseInstrument):
     def abandon_handle(self) -> None:
         """Бросить дескриптор без вызова rtlsdr_close().
 
-        Используется когда устройство физически отключено: вызов rtlsdr_close()
-        на невалидном USB-дескрипторе приводит к segfault ("Reattaching kernel
-        driver failed!"). Обнуление dev_p отключает __del__ в pyrtlsdr.
+        Вызывается когда устройство физически отключено. После _install_safe_close()
+        просто выставляем device_opened=False — следующий close() станет no-op.
         """
         if self._sdr is None:
             return
+        sdr = self._sdr
+        self._sdr = None
         try:
-            self._sdr.dev_p = None   # pyrtlsdr.close() проверяет это перед вызовом librtlsdr
+            sdr.device_opened = False
         except Exception:
             pass
-        self._sdr = None
+        sdr.close = lambda: None  # belt-and-suspenders
+
+    # ------------------------------------------------------------------
 
     # RTL-SDR нестабилен при sample rate в диапазоне 300–900 кГц — segfault/PLL fail.
     # При попадании в эту зону принудительно используем ближайшее безопасное значение.
@@ -74,6 +123,7 @@ class RtlSdrBackend(BaseInstrument):
     def configure(self, cfg: PanoramaConfig) -> None:
         if not self._sdr:
             raise RuntimeError("RTL-SDR не подключён.")
+        self._check_device_present()
 
         self._cfg = cfg
         span = cfg.stop_freq_hz - cfg.start_freq_hz
@@ -103,6 +153,7 @@ class RtlSdrBackend(BaseInstrument):
     def capture_spectrum(self) -> Spectrum:
         if not self._sdr or not self._cfg:
             raise RuntimeError("RTL-SDR не настроен")
+        self._check_device_present()
 
         cfg = self._cfg
         span = cfg.stop_freq_hz - cfg.start_freq_hz
