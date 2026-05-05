@@ -136,6 +136,21 @@ class RtlSdrBackend(BaseInstrument):
             return self._SR_SNAP
         return sr
 
+    def _use_single(self, cfg: PanoramaConfig) -> bool:
+        """True → одиночный захват; False → sweep.
+
+        Live-режим (1 усреднение, нет MaxHold): одиночный захват до _USABLE_BW
+        для максимальной частоты кадров.
+
+        Режим измерения: одиночный захват только до _SWEEP_STEP_BW. Для бо́льших
+        диапазонов используется sweep, чтобы каждый чанк оставался в плоской
+        зоне АЧХ тюнера и не было спада мощности по краям.
+        """
+        fast = cfg.averaging_count <= 1 and not cfg.use_max_hold
+        span = cfg.stop_freq_hz - cfg.start_freq_hz
+        threshold = self._USABLE_BW if fast else self._SWEEP_STEP_BW
+        return span <= threshold
+
     def configure(self, cfg: PanoramaConfig) -> None:
         if not self._sdr:
             raise RuntimeError("RTL-SDR не подключён.")
@@ -144,12 +159,12 @@ class RtlSdrBackend(BaseInstrument):
         self._cfg = cfg
         span = cfg.stop_freq_hz - cfg.start_freq_hz
 
-        if span <= self._USABLE_BW:
+        if self._use_single(cfg):
             sr = self._safe_sr(int(np.clip(span * 1.15, 250_000, self._SAFE_SR)))
             self._sdr.center_freq = int((cfg.start_freq_hz + cfg.stop_freq_hz) / 2)
         else:
             sr = self._SAFE_SR
-            self._sdr.center_freq = int(cfg.start_freq_hz + sr / 2)
+            self._sdr.center_freq = int(cfg.start_freq_hz + self._SWEEP_STEP_BW / 2)
 
         self._sdr.sample_rate = sr
 
@@ -172,11 +187,9 @@ class RtlSdrBackend(BaseInstrument):
         self._check_device_present()
 
         cfg = self._cfg
-        span = cfg.stop_freq_hz - cfg.start_freq_hz
-        # Быстрый режим: live preview (1 усреднение, нет MaxHold)
         fast = cfg.averaging_count <= 1 and not cfg.use_max_hold
 
-        if span <= self._USABLE_BW:
+        if self._use_single(cfg):
             return self._capture_single(cfg.start_freq_hz, cfg.stop_freq_hz, cfg, fast=fast)
         return self._capture_sweep(cfg, fast=fast)
 
