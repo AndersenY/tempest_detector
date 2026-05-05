@@ -116,10 +116,23 @@ class SpectrumPlotWidget(QWidget):
         self._sep.setStyleSheet("color: #555;")
         self._sep.setFixedWidth(1)
 
+        self.btn_cursor = QPushButton("⊕ Курсор")
+        self.btn_cursor.setCheckable(True)
+        self.btn_cursor.setChecked(True)
+        self.btn_cursor.setToolTip("Показывать частоту и уровень при наведении мыши")
+        self.btn_cursor.setStyleSheet("""
+            QPushButton { background-color: #555; color: #aaa; border: none;
+                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+            QPushButton:checked { background-color: #00695C; color: white; }
+            QPushButton:hover { background-color: #777; }
+        """)
+        self.btn_cursor.toggled.connect(self._on_cursor_toggle)
+
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
         panel_layout.addWidget(self.btn_mark_mode)
         panel_layout.addWidget(self.btn_clear_marks)
+        panel_layout.addWidget(self.btn_cursor)
         panel_layout.addWidget(self._sep)
         panel_layout.addWidget(self.btn_fullscreen)
         # panel_layout.addWidget(self.btn_highlight)
@@ -160,12 +173,72 @@ class SpectrumPlotWidget(QWidget):
         self._freq_range_mhz = None
         self._mark_mode = False
         self._panorama_marks: list = []
-        # theme_key → (curve_name, width) для обновления при смене темы
         self._curve_keys: dict[str, tuple[str, int | float]] = {}
+        self._cursor_enabled = True
+        self._cursor_vline: pg.InfiniteLine | None = None
+        self._cursor_hline: pg.InfiniteLine | None = None
+        self._cursor_label: pg.TextItem | None = None
 
+        self._setup_cursor()
         self.plot.scene().sigMouseClicked.connect(self._on_scene_click)
+        self.plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
 
     _ZOOM_FACTOR = 0.7   # каждый клик сжимает/растягивает диапазон на 30 %
+
+    # ------------------------------------------------------------------
+    # Курсор: перекрестие + подпись частоты/уровня
+    # ------------------------------------------------------------------
+
+    def _setup_cursor(self) -> None:
+        pen = pg.mkPen("#aaaaaa", width=1, style=Qt.PenStyle.DotLine)
+        self._cursor_vline = pg.InfiniteLine(angle=90, movable=False, pen=pen)
+        self._cursor_hline = pg.InfiniteLine(angle=0,  movable=False, pen=pen)
+        for line in (self._cursor_vline, self._cursor_hline):
+            line.setZValue(150)
+            line.setVisible(False)
+            self.plot.addItem(line)
+
+        self._cursor_label = pg.TextItem(
+            text="", color="#ffffff",
+            fill=pg.mkBrush(30, 30, 30, 210),
+            border=pg.mkPen("#555555"),
+            anchor=(0, 1),
+        )
+        self._cursor_label.setZValue(200)
+        self._cursor_label.setVisible(False)
+        self.plot.addItem(self._cursor_label)
+
+    def _on_cursor_toggle(self, checked: bool) -> None:
+        self._cursor_enabled = checked
+        if not checked:
+            for item in (self._cursor_vline, self._cursor_hline, self._cursor_label):
+                if item is not None:
+                    item.setVisible(False)
+
+    def _on_mouse_moved(self, pos) -> None:
+        if not self._cursor_enabled or self._cursor_vline is None:
+            return
+        vb = self.plot.getPlotItem().getViewBox()
+        if not vb.sceneBoundingRect().contains(pos):
+            for item in (self._cursor_vline, self._cursor_hline, self._cursor_label):
+                item.setVisible(False)
+            return
+
+        pt = vb.mapSceneToView(pos)
+        freq_mhz = pt.x()
+        amp_db   = pt.y()
+
+        self._cursor_vline.setPos(freq_mhz)
+        self._cursor_hline.setPos(amp_db)
+        for line in (self._cursor_vline, self._cursor_hline):
+            line.setVisible(True)
+
+        x0, x1 = vb.viewRange()[0]
+        anchor = (0, 1) if freq_mhz < (x0 + x1) / 2 else (1, 1)
+        self._cursor_label.setAnchor(anchor)
+        self._cursor_label.setPos(freq_mhz, amp_db)
+        self._cursor_label.setText(f" {freq_mhz:.3f} МГц\n {amp_db:.1f} дБ")
+        self._cursor_label.setVisible(True)
 
     def _zoom_in(self):
         vb = self.plot.getPlotItem().getViewBox()
@@ -254,6 +327,19 @@ class SpectrumPlotWidget(QWidget):
             f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
         )
         self.btn_clear_marks.setStyleSheet(btn)
+        self.btn_cursor.setStyleSheet(
+            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg_off']}; border: none;"
+            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
+            f" QPushButton:checked {{ background-color: #00695C; color: white; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        )
+        cursor_pen = pg.mkPen(t["text_muted"], width=1, style=Qt.PenStyle.DotLine)
+        if self._cursor_vline is not None:
+            self._cursor_vline.setPen(cursor_pen)
+        if self._cursor_hline is not None:
+            self._cursor_hline.setPen(cursor_pen)
+        if self._cursor_label is not None:
+            self._cursor_label.setColor(t["text_axis"])
         self.btn_fullscreen.setStyleSheet(
             f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['text_dim']}; border: none;"
             f" padding: 2px; border-radius: 3px; font-size: 14px; }}"
@@ -451,8 +537,12 @@ class SpectrumPlotWidget(QWidget):
         self._panorama_marks.clear()  # ссылки уже удалены plot.clear()
         self._highlight_line = None
         self.threshold_line = None
+        self._cursor_vline = None
+        self._cursor_hline = None
+        self._cursor_label = None
         self.legend = self.plot.addLegend(offset=(10, 10))
         self._apply_legend_theme(self._theme)
+        self._setup_cursor()
         # Сброс режима меток
         self.btn_mark_mode.blockSignals(True)
         self.btn_mark_mode.setChecked(False)

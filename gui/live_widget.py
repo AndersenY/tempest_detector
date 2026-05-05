@@ -48,6 +48,7 @@ class LiveWidget(QWidget):
         self._highlight_line: pg.InfiniteLine | None = None
         self._highlight_enabled = True
         self._last_highlight_mhz: float | None = None
+        self._cursor_enabled = True
         # Follow-режим: ретюнинг при пане/зуме
         self._follow_span_mhz: float | None = None
         self._locked_span_mhz: float | None = None
@@ -127,6 +128,26 @@ class LiveWidget(QWidget):
 
         self._pw.scene().sigMouseClicked.connect(self._on_plot_click)
 
+        cursor_pen = pg.mkPen("#aaaaaa", width=1, style=Qt.PenStyle.DotLine)
+        self._cursor_vline = pg.InfiniteLine(angle=90, movable=False, pen=cursor_pen)
+        self._cursor_hline = pg.InfiniteLine(angle=0,  movable=False, pen=cursor_pen)
+        for line in (self._cursor_vline, self._cursor_hline):
+            line.setZValue(150)
+            line.setVisible(False)
+            pi.addItem(line)
+
+        self._cursor_label = pg.TextItem(
+            text="", color="#ffffff",
+            fill=pg.mkBrush(30, 30, 30, 210),
+            border=pg.mkPen("#555555"),
+            anchor=(0, 1),
+        )
+        self._cursor_label.setZValue(200)
+        self._cursor_label.setVisible(False)
+        pi.addItem(self._cursor_label)
+
+        self._pw.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
     @staticmethod
     def _make_separator() -> QFrame:
         sep = QFrame()
@@ -170,6 +191,13 @@ class LiveWidget(QWidget):
         self.btn_clear_marks.setToolTip("Удалить все метки")
         self.btn_clear_marks.clicked.connect(self._on_clear_marks_clicked)
 
+        self.btn_cursor = QPushButton("⊕ Курсор")
+        self.btn_cursor.setCheckable(True)
+        self.btn_cursor.setChecked(True)
+        self.btn_cursor.setToolTip("Показывать частоту и уровень при наведении мыши")
+        self.btn_cursor.setStyleSheet(self._make_button_style("#00695C"))
+        self.btn_cursor.toggled.connect(self._on_cursor_toggle)
+
         self.btn_fullscreen = QPushButton("⛶")
         self.btn_fullscreen.setCheckable(True)
         self.btn_fullscreen.setFixedSize(28, 28)
@@ -202,7 +230,7 @@ class LiveWidget(QWidget):
 
         self._sep_cp = self._make_separator()
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
-                  self.btn_mark, self.btn_clear_marks):
+                  self.btn_mark, self.btn_clear_marks, self.btn_cursor):
             cp.addWidget(w)
         cp.addWidget(self._sep_cp)
         for w in (self.btn_fullscreen, self.btn_stop_live, self.btn_resume_live):
@@ -315,6 +343,11 @@ class LiveWidget(QWidget):
         self.btn_reset_peak.setStyleSheet(btn)
         self.btn_mark.setStyleSheet(self._make_button_style("#E65100"))
         self.btn_clear_marks.setStyleSheet(btn)
+        self.btn_cursor.setStyleSheet(self._make_button_style("#00695C"))
+        cursor_pen = pg.mkPen(t["text_muted"], width=1, style=Qt.PenStyle.DotLine)
+        self._cursor_vline.setPen(cursor_pen)
+        self._cursor_hline.setPen(cursor_pen)
+        self._cursor_label.setColor(t["text_axis"])
         self.btn_fullscreen.setStyleSheet(
             self._make_button_style("#2E7D32").replace("padding: 4px 8px", "padding: 2px")
             + " font-size: 14px;"
@@ -524,6 +557,47 @@ class LiveWidget(QWidget):
                 "fill": pg.mkBrush(*t["marker_label_fill"]),
             },
         )
+
+    def _on_cursor_toggle(self, checked: bool) -> None:
+        self._cursor_enabled = checked
+        if not checked:
+            self._cursor_vline.setVisible(False)
+            self._cursor_hline.setVisible(False)
+            self._cursor_label.setVisible(False)
+
+    def _on_mouse_moved(self, pos) -> None:
+        if not self._cursor_enabled:
+            return
+        vb = self._pw.getPlotItem().getViewBox()
+        if not vb.sceneBoundingRect().contains(pos):
+            self._cursor_vline.setVisible(False)
+            self._cursor_hline.setVisible(False)
+            self._cursor_label.setVisible(False)
+            return
+
+        pt = vb.mapSceneToView(pos)
+        freq_mhz = pt.x()
+
+        # Берём уровень из кривой Live (ближайший бин)
+        data = self._live_curve.getData()
+        if data[0] is not None and len(data[0]) > 1:
+            idx = int(np.searchsorted(data[0], freq_mhz))
+            idx = max(0, min(idx, len(data[0]) - 1))
+            amp_db = float(data[1][idx])
+        else:
+            amp_db = pt.y()
+
+        self._cursor_vline.setPos(freq_mhz)
+        self._cursor_hline.setPos(amp_db)
+        self._cursor_vline.setVisible(True)
+        self._cursor_hline.setVisible(True)
+
+        x0, x1 = vb.viewRange()[0]
+        anchor = (0, 1) if freq_mhz < (x0 + x1) / 2 else (1, 1)
+        self._cursor_label.setAnchor(anchor)
+        self._cursor_label.setPos(freq_mhz, amp_db)
+        self._cursor_label.setText(f" {freq_mhz:.3f} МГц\n {amp_db:.1f} дБ")
+        self._cursor_label.setVisible(True)
 
     def _on_clear_marks_clicked(self) -> None:
         self.clear_marks()

@@ -1446,6 +1446,7 @@ class MainWindow(QMainWindow):
     def _stop_zero_span(self) -> None:
         if self._zs_worker is not None:
             self._zs_worker.stop()
+            self._zs_worker.wait(5000)  # дождаться finally-блока (restore configure)
             self._zs_worker = None
         self._audio.stop()
 
