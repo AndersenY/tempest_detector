@@ -1,8 +1,8 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal
 import pyqtgraph as pg
 import numpy as np
-from gui.theme import DARK
+from gui.theme import DARK, btn_normal, btn_toggle, btn_icon
 
 
 class SpectrumPlotWidget(QWidget):
@@ -37,96 +37,59 @@ class SpectrumPlotWidget(QWidget):
         self.legend = self.plot.addLegend(offset=(10, 10))
         self._apply_legend_theme(self._theme)
 
-        _btn_style = """
-            QPushButton { background-color: #555; color: white; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:hover { background-color: #777; }
-        """
-        _btn_check_style = """
-            QPushButton { background-color: #555; color: #aaa; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:checked { background-color: #E65100; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """
+        t = self._theme
 
-        # Верхняя правая панель: сброс + маркеры + метка + live
+        # Верхняя правая панель: сброс + маркеры + метка + курсор + fullscreen
         self.control_panel = QWidget(self.plot)
         self.control_panel.setStyleSheet(
-            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
         panel_layout = QHBoxLayout(self.control_panel)
         panel_layout.setContentsMargins(5, 5, 5, 5)
-        panel_layout.setSpacing(5)
+        panel_layout.setSpacing(4)
 
         self.btn_auto_scale = QPushButton("⟲ Сброс")
         self.btn_auto_scale.setToolTip("Сбросить масштаб на графике")
-        self.btn_auto_scale.setStyleSheet(_btn_style)
+        self.btn_auto_scale.setStyleSheet(btn_normal(t))
         self.btn_auto_scale.clicked.connect(self.reset_zoom)
 
-        self.btn_markers = QPushButton("ПЭМИН")
+        self.btn_markers = QPushButton("Метки")
         self.btn_markers.setCheckable(True)
         self.btn_markers.setChecked(True)
-        self.btn_markers.setToolTip("Отобразить на графике частоты")
-        self.btn_markers.setStyleSheet("""
-            QPushButton { background-color: #555; color: #aaa; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:checked { background-color: #2E7D32; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """)
+        self.btn_markers.setToolTip("Показать/скрыть все маркеры на графике")
+        self.btn_markers.setStyleSheet(btn_toggle(t))
         self.btn_markers.toggled.connect(self._on_marker_toggle)
 
-        self.btn_mark_mode = QPushButton("Метка")
+        self.btn_mark_mode = QPushButton("⊞ Метка")
         self.btn_mark_mode.setCheckable(True)
-        self.btn_mark_mode.setToolTip("Режим меток: кликните на спектр для отметки частоты")
-        self.btn_mark_mode.setStyleSheet(_btn_check_style)
+        self.btn_mark_mode.setToolTip("Режим добавления меток: кликните на спектр для отметки частоты")
+        self.btn_mark_mode.setStyleSheet(btn_toggle(t))
         self.btn_mark_mode.toggled.connect(self._on_mark_mode_toggle)
 
         self.btn_clear_marks = QPushButton("✕ Метки")
-        self.btn_clear_marks.setToolTip("Удалить все метки")
-        self.btn_clear_marks.setStyleSheet(_btn_style)
-        self.btn_clear_marks.clicked.connect(self.clear_panorama_marks)
-
-        self.btn_highlight = QPushButton("⊙ Маркер")
-        self.btn_highlight.setCheckable(True)
-        self.btn_highlight.setChecked(True)
-        self.btn_highlight.setToolTip("Показывать/скрывать выделение выбранной частоты")
-        self.btn_highlight.setStyleSheet("""
-            QPushButton { background-color: #555; color: #aaa; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:checked { background-color: #1565C0; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """)
-        self.btn_highlight.toggled.connect(self._on_highlight_toggle)
-
-        self.btn_fullscreen = QPushButton("⛶")
-        self.btn_fullscreen.setCheckable(True)
-        self.btn_fullscreen.setFixedSize(28, 28)
-        self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
-        self.btn_fullscreen.setStyleSheet("""
-            QPushButton { background-color: #555; color: #ccc; border: none;
-                          padding: 2px; border-radius: 3px; font-size: 14px; }
-            QPushButton:checked { background-color: #2E7D32; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """)
-        self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
-
-        self._sep = QFrame()
-        self._sep.setFrameShape(QFrame.Shape.VLine)
-        self._sep.setFrameShadow(QFrame.Shadow.Sunken)
-        self._sep.setStyleSheet("color: #555;")
-        self._sep.setFixedWidth(1)
+        self.btn_clear_marks.setToolTip("Удалить все пользовательские метки")
+        self.btn_clear_marks.setStyleSheet(btn_normal(t))
+        self.btn_clear_marks.clicked.connect(self._confirm_and_clear_marks)
 
         self.btn_cursor = QPushButton("⊕ Курсор")
         self.btn_cursor.setCheckable(True)
         self.btn_cursor.setChecked(True)
         self.btn_cursor.setToolTip("Показывать частоту и уровень при наведении мыши")
-        self.btn_cursor.setStyleSheet("""
-            QPushButton { background-color: #555; color: #aaa; border: none;
-                          padding: 4px 8px; border-radius: 3px; font-size: 11px; }
-            QPushButton:checked { background-color: #00695C; color: white; }
-            QPushButton:hover { background-color: #777; }
-        """)
+        self.btn_cursor.setStyleSheet(btn_toggle(t))
         self.btn_cursor.toggled.connect(self._on_cursor_toggle)
+
+        self._sep = QFrame()
+        self._sep.setFrameShape(QFrame.Shape.VLine)
+        self._sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._sep.setStyleSheet(f"color: {t['sep']};")
+        self._sep.setFixedWidth(1)
+
+        self.btn_fullscreen = QPushButton("⛶")
+        self.btn_fullscreen.setCheckable(True)
+        self.btn_fullscreen.setFixedSize(28, 28)
+        self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
+        self.btn_fullscreen.setStyleSheet(btn_icon(t, checkable=True))
+        self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
 
         panel_layout.addWidget(self.btn_auto_scale)
         panel_layout.addWidget(self.btn_markers)
@@ -135,25 +98,24 @@ class SpectrumPlotWidget(QWidget):
         panel_layout.addWidget(self.btn_cursor)
         panel_layout.addWidget(self._sep)
         panel_layout.addWidget(self.btn_fullscreen)
-        # panel_layout.addWidget(self.btn_highlight)
 
         # Нижняя правая панель: зум + и -
         self.zoom_panel = QWidget(self.plot)
         self.zoom_panel.setStyleSheet(
-            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
         zoom_layout = QHBoxLayout(self.zoom_panel)
         zoom_layout.setContentsMargins(5, 5, 5, 5)
-        zoom_layout.setSpacing(8)
+        zoom_layout.setSpacing(6)
 
         self.btn_zoom_in = QPushButton("+")
         self.btn_zoom_in.setFixedSize(28, 28)
-        self.btn_zoom_in.setStyleSheet(_btn_style)
+        self.btn_zoom_in.setStyleSheet(btn_icon(t))
         self.btn_zoom_in.clicked.connect(self._zoom_in)
 
         self.btn_zoom_out = QPushButton("−")
         self.btn_zoom_out.setFixedSize(28, 28)
-        self.btn_zoom_out.setStyleSheet(_btn_style)
+        self.btn_zoom_out.setStyleSheet(btn_icon(t))
         self.btn_zoom_out.clicked.connect(self._zoom_out)
 
         zoom_layout.addWidget(self.btn_zoom_in)
@@ -325,34 +287,21 @@ class SpectrumPlotWidget(QWidget):
             ax.setPen(pg.mkPen(t["axis_pen"]))
         self._apply_legend_theme(t)
 
-        btn = (
-            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg']}; border: none;"
-            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
-        )
         self.control_panel.setStyleSheet(
             f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
-        self.btn_auto_scale.setStyleSheet(btn)
-        self.btn_markers.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg_off']}; border: none;"
-            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
-            f" QPushButton:checked {{ background-color: #2E7D32; color: white; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        self.zoom_panel.setStyleSheet(
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
-        self.btn_mark_mode.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg_off']}; border: none;"
-            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
-            f" QPushButton:checked {{ background-color: #E65100; color: white; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
-        )
-        self.btn_clear_marks.setStyleSheet(btn)
-        self.btn_cursor.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg_off']}; border: none;"
-            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
-            f" QPushButton:checked {{ background-color: #00695C; color: white; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
-        )
+        self.btn_auto_scale.setStyleSheet(btn_normal(t))
+        self.btn_markers.setStyleSheet(btn_toggle(t))
+        self.btn_mark_mode.setStyleSheet(btn_toggle(t))
+        self.btn_clear_marks.setStyleSheet(btn_normal(t))
+        self.btn_cursor.setStyleSheet(btn_toggle(t))
+        self.btn_fullscreen.setStyleSheet(btn_icon(t, checkable=True))
+        self.btn_zoom_in.setStyleSheet(btn_icon(t))
+        self.btn_zoom_out.setStyleSheet(btn_icon(t))
+        self._sep.setStyleSheet(f"color: {t['sep']};")
         cursor_pen = pg.mkPen(t["text_muted"], width=1, style=Qt.PenStyle.DotLine)
         if self._cursor_vline is not None:
             self._cursor_vline.setPen(cursor_pen)
@@ -363,18 +312,6 @@ class SpectrumPlotWidget(QWidget):
             self._cursor_label.fill = pg.mkBrush(*t["marker_label_fill"])
             self._cursor_label.border = pg.mkPen(t["border_input"])
             self._cursor_label.update()
-        self.btn_fullscreen.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['text_dim']}; border: none;"
-            f" padding: 2px; border-radius: 3px; font-size: 14px; }}"
-            f" QPushButton:checked {{ background-color: #2E7D32; color: white; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
-        )
-        self._sep.setStyleSheet(f"color: {t['sep']};")
-        self.zoom_panel.setStyleSheet(
-            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
-        )
-        self.btn_zoom_in.setStyleSheet(btn)
-        self.btn_zoom_out.setStyleSheet(btn)
 
         # Обновить цвет существующих кривых
         for name, (key, width) in self._curve_keys.items():
@@ -412,7 +349,20 @@ class SpectrumPlotWidget(QWidget):
         self.markers_visible = checked
         for marker in self.signal_markers:
             marker.setVisible(checked)
-        self.btn_markers.setText("Скрыть" if checked else "ПЭМИН")
+        for mark in self._panorama_marks:
+            mark.setVisible(checked)
+
+    def _confirm_and_clear_marks(self) -> None:
+        if not self._panorama_marks:
+            return
+        reply = QMessageBox.question(
+            self, "Удаление меток",
+            "Удалить все пользовательские метки?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.clear_panorama_marks()
 
     def _on_mark_mode_toggle(self, checked: bool) -> None:
         self._mark_mode = checked
@@ -453,6 +403,7 @@ class SpectrumPlotWidget(QWidget):
             # },
         )
         line.setPos(freq_mhz)
+        line.setVisible(self.markers_visible)
         self.plot.addItem(line)
         self._panorama_marks.append(line)
         self.freq_mark_added.emit(freq_mhz)

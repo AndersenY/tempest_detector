@@ -23,11 +23,15 @@ DARK: dict = {
     "text_off":       "#888888",
     "text_axis":      "#ffffff",
     "text_axis_dim":  "#cccccc",
-    # Buttons (regular toolbar buttons)
-    "btn_bg":         "#555555",
-    "btn_hover":      "#777777",
-    "btn_fg":         "white",
-    "btn_fg_off":     "#aaaaaa",
+    # Toolbar buttons (overlay panels on plots)
+    "btn_bg":           "#4a4a4a",
+    "btn_hover":        "#5e5e5e",
+    "btn_fg":           "#e0e0e0",
+    "btn_fg_off":       "#888888",
+    "btn_border":       "transparent",
+    "btn_active":       "#2b5a8c",
+    "btn_danger":       "#8b2020",
+    "btn_danger_hover": "#a02828",
     # Expert panel buttons
     "expert_btn_bg":       "#3a3a3a",
     "expert_btn_fg":       "#e0e0e0",
@@ -74,6 +78,12 @@ DARK: dict = {
     "sig_pending":   (255, 220, 50),         # ожидание верификации
     "sig_bookmark":  (255, 152, 0),          # закладка
     "sig_confirmed": (50,  220, 80),         # подтверждённый ПЭМИН
+    # ── Цвета статусов в таблице результатов ─────────────────────────────
+    "tbl_status_ok":   "#66BB6A",   # ПЭМИН подтверждён
+    "tbl_status_fail": "#EF5350",   # Брак (В1)
+    "tbl_status_ext":  "#42A5F5",   # Внешний / Двойной брак
+    "tbl_status_warn": "#FFCA28",   # В1 OK, Потенциальный
+    "tbl_status_wait": "#9E9E9E",   # Ожидание
 }
 
 LIGHT: dict = {
@@ -101,11 +111,15 @@ LIGHT: dict = {
     "text_off":       "#999999",
     "text_axis":      "#222222",
     "text_axis_dim":  "#444444",
-    # Buttons
-    "btn_bg":         "#d5d5d5",
-    "btn_hover":      "#bebebe",
-    "btn_fg":         "#1a1a1a",
-    "btn_fg_off":     "#555555",
+    # Toolbar buttons
+    "btn_bg":           "#e2e2e2",
+    "btn_hover":        "#cccccc",
+    "btn_fg":           "#1a1a1a",
+    "btn_fg_off":       "#4a4a4a",
+    "btn_border":       "#9e9e9e",
+    "btn_active":       "#2b5a8c",
+    "btn_danger":       "#8b2020",
+    "btn_danger_hover": "#a02828",
     # Expert panel buttons
     "expert_btn_bg":       "#e8e8e8",
     "expert_btn_fg":       "#1a1a1a",
@@ -152,4 +166,62 @@ LIGHT: dict = {
     "sig_pending":   (160, 100,   0),        # тёмно-янтарный
     "sig_bookmark":  (200,  80,   0),        # тёмно-оранжевый
     "sig_confirmed": ( 20, 130,  30),        # тёмно-зелёный
+    # ── Цвета статусов в таблице результатов ─────────────────────────────
+    "tbl_status_ok":   "#2E7D32",   # ПЭМИН подтверждён  — тёмно-зелёный
+    "tbl_status_fail": "#C62828",   # Брак (В1)          — тёмно-красный
+    "tbl_status_ext":  "#1565C0",   # Внешний            — тёмно-синий
+    "tbl_status_warn": "#E65100",   # В1 OK / Потенц.    — тёмно-оранжевый
+    "tbl_status_wait": "#757575",   # Ожидание           — средне-серый
 }
+
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции для стилей кнопок (overlay-панели на графиках)
+# ---------------------------------------------------------------------------
+
+def btn_normal(t: dict) -> str:
+    """Обычная кнопка (не переключатель)."""
+    return (
+        f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg']};"
+        f" border: 1px solid {t['btn_border']}; border-radius: 2px;"
+        f" font-size: 11px; min-height: 22px; padding: 3px 10px; }}"
+        f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        f" QPushButton:disabled {{ background-color: {t['bg_input']};"
+        f" color: {t['text_off']}; border-color: {t['btn_border']}; }}"
+    )
+
+def btn_toggle(t: dict) -> str:
+    """Кнопка-переключатель (checkable). Активное состояние — единый акцентный цвет."""
+    return (
+        f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg_off']};"
+        f" border: 1px solid {t['btn_border']}; border-radius: 2px;"
+        f" font-size: 11px; min-height: 22px; padding: 3px 10px; }}"
+        f" QPushButton:checked {{ background-color: {t['btn_active']};"
+        f" color: #ffffff; border-color: {t['btn_active']}; }}"
+        f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+        f" QPushButton:disabled {{ background-color: {t['bg_input']};"
+        f" color: {t['text_off']}; border-color: {t['btn_border']}; }}"
+    )
+
+def btn_icon(t: dict, checkable: bool = False) -> str:
+    """Иконочная кнопка фиксированного размера (28×28)."""
+    s = (
+        f"QPushButton {{ background-color: {t['btn_bg']}; color: {t['btn_fg']};"
+        f" border: 1px solid {t['btn_border']}; border-radius: 2px;"
+        f" font-size: 13px; padding: 2px; }}"
+        f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
+    )
+    if checkable:
+        s += (
+            f" QPushButton:checked {{ background-color: {t['btn_active']};"
+            f" color: #ffffff; border-color: {t['btn_active']}; }}"
+        )
+    return s
+
+def btn_danger(t: dict) -> str:
+    """Кнопка деструктивного действия (стоп, удалить)."""
+    return (
+        f"QPushButton {{ background-color: {t['btn_danger']}; color: #ffffff;"
+        f" border: none; border-radius: 2px; font-size: 13px; padding: 2px; }}"
+        f" QPushButton:hover {{ background-color: {t['btn_danger_hover']}; }}"
+    )

@@ -59,41 +59,44 @@ class Worker(QThread):
 class _StatusDelegate(QStyledItemDelegate):
     """Делегат для колонки «Статус»: редактирование через выпадающий список."""
 
+    # (label, tbl_status_key, semantic_key)
     _OPTIONS = [
-        ("ПЭМИН",           "#66BB6A", "green"),
-        ("Брак (В1)",        "#EF5350", "red"),
-        ("Внешний (В2)",     "#42A5F5", "blue"),
-        ("Двойной брак",     "#42A5F5", "blue"),
-        ("В1 OK",            "#FFCA28", "yellow"),
-        ("Ожидание",         "#9E9E9E", "yellow"),
-        ("Потенциальный",    "#FFCA28", "yellow"),
-        ("Гармоник нет",     "#EF5350", "red"),
+        ("ПЭМИН",           "ok",   "green"),
+        ("Брак (В1)",        "fail", "red"),
+        ("Внешний (В2)",     "ext",  "blue"),
+        ("Двойной брак",     "ext",  "blue"),
+        ("В1 OK",            "warn", "yellow"),
+        ("Ожидание",         "wait", "yellow"),
+        ("Потенциальный",    "warn", "yellow"),
+        ("Гармоник нет",     "fail", "red"),
     ]
 
-    # Цвета по умолчанию (тёмная тема); обновляются через set_theme()
+    # Обновляются через set_theme()
     _bg       = "#2b2b2b"
     _fg       = "#e0e0e0"
     _border   = "#555555"
-    _sel_bg   = "#1565C0"   # синий, хорошо виден на тёмном и светлом
+    _sel_bg   = "#1565C0"
     _sel_fg   = "#ffffff"
+    _theme_dict: dict = DARK
 
     def set_theme(self, t: dict) -> None:
+        self._theme_dict = t
         self._bg     = t["bg_widget"]
         self._fg     = t["text"]
         self._border = t["border_input"]
         if t["name"] == "dark":
-            self._sel_bg = "#1E88E5"   # яркий синий — хорошо виден на тёмном фоне
+            self._sel_bg = "#1E88E5"
             self._sel_fg = "#ffffff"
         else:
-            self._sel_bg = "#1565C0"   # насыщенный синий на светлом фоне
+            self._sel_bg = "#1565C0"
             self._sel_fg = "#ffffff"
 
-    @classmethod
-    def color_for(cls, text: str) -> str:
-        for label, hex_color, _ in cls._OPTIONS:
+    def color_for(self, text: str) -> str:
+        for label, color_key, _ in self._OPTIONS:
             if label in text:
-                return hex_color
-        return "#9E9E9E"
+                return self._theme_dict.get(f"tbl_status_{color_key}",
+                                            self._theme_dict["tbl_status_wait"])
+        return self._theme_dict["tbl_status_wait"]
 
     @classmethod
     def key_for(cls, text: str) -> str:
@@ -430,6 +433,11 @@ class MainWindow(QMainWindow):
         self.live_widget.apply_theme(t)
         self.zero_span_widget.apply_theme(t)
         self.expert_panel.apply_theme(t)
+
+        # Перекрасить таблицу и маркеры на графике, если есть результаты
+        if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
+            self._update_table_from_signals(self.wf.signals)
+            self.plot.plot_signals(self.wf.signals)
 
     def _init_ui(self):
         w = QWidget()
@@ -1254,7 +1262,7 @@ class MainWindow(QMainWindow):
             elif col == 3:
                 s.amplitude_off_db = float(text)
             elif col == 5:
-                color_hex = _StatusDelegate.color_for(text)
+                color_hex = self._status_delegate.color_for(text)
                 self.table.blockSignals(True)
                 item.setForeground(QColor(color_hex))
                 self.table.blockSignals(False)
@@ -2047,11 +2055,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _update_table_from_signals(self, signals):
-        COLOR_WAIT    = "#9E9E9E"
-        COLOR_SUCCESS = "#66BB6A"
-        COLOR_FAIL_V1 = "#EF5350"
-        COLOR_EXTERNAL = "#42A5F5"
-        COLOR_WARN    = "#FFCA28"
+        COLOR_WAIT     = self._theme["tbl_status_wait"]
+        COLOR_SUCCESS  = self._theme["tbl_status_ok"]
+        COLOR_FAIL_V1  = self._theme["tbl_status_fail"]
+        COLOR_EXTERNAL = self._theme["tbl_status_ext"]
+        COLOR_WARN     = self._theme["tbl_status_warn"]
 
         item_flags = (Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
                       | Qt.ItemFlag.ItemIsEditable)

@@ -253,8 +253,9 @@ class ExpertPanel(QGroupBox):
                 f"E(с+ш) = <b>{sig.amplitude_on_db:.1f} дБ</b>"
                 f"  &nbsp;  E(ш) = {sig.amplitude_off_db:.1f} дБ"
             )
-            colors = {"green": "#66BB6A", "red": "#EF5350", "blue": "#42A5F5",
-                      "yellow": "#FFCA28"}
+            t = self._theme
+            colors = {"green": t["tbl_status_ok"],   "red":    t["tbl_status_fail"],
+                      "blue":  t["tbl_status_ext"],   "yellow": t["tbl_status_warn"]}
             labels = {"green": "ПЭМИН", "red": "Брак (В1)",
                       "blue": "Внешний", "yellow": "Ожидание"}
             c = sig.status_color

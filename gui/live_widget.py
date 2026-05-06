@@ -1,9 +1,10 @@
 import time
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
+                              QMessageBox)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from gui.theme import DARK
+from gui.theme import DARK, btn_normal, btn_toggle, btn_icon, btn_danger
 
 
 class LiveWidget(QWidget):
@@ -40,6 +41,7 @@ class LiveWidget(QWidget):
         self._ema_buf:        np.ndarray | None = None   # буфер для in-place EMA
         self._show_peak     = True
         self._mark_mode     = False
+        self._marks_visible = True
         self._x_initialized = False
         self._last_time     = time.perf_counter()
         self._frame_count   = 0
@@ -74,17 +76,8 @@ class LiveWidget(QWidget):
         self._build_zoom_panel()
         layout.addWidget(self._pw)
 
-    def _make_button_style(self, checked_bg: str | None = None) -> str:
-        t = self._theme
-        fg = t["btn_fg_off"] if checked_bg else t["btn_fg"]
-        style = (
-            f"QPushButton {{ background-color: {t['btn_bg']}; color: {fg}; border: none;"
-            f" padding: 4px 8px; border-radius: 3px; font-size: 11px; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_hover']}; }}"
-        )
-        if checked_bg:
-            style += f" QPushButton:checked {{ background-color: {checked_bg}; color: white; }}"
-        return style
+    def _make_button_style(self, checkable: bool = False) -> str:
+        return btn_toggle(self._theme) if checkable else btn_normal(self._theme)
 
     def _build_plot_widget(self) -> None:
         self._pw = pg.PlotWidget()
@@ -160,36 +153,44 @@ class LiveWidget(QWidget):
         return sep
 
     def _build_control_panel(self) -> None:
+        t = self._theme
         self.control_panel = QWidget(self._pw)
         self.control_panel.setStyleSheet(
-            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
         cp = QHBoxLayout(self.control_panel)
         cp.setContentsMargins(5, 5, 5, 5)
-        cp.setSpacing(5)
+        cp.setSpacing(4)
 
         self.btn_auto_scale = QPushButton("⟲ Сброс")
-        self.btn_auto_scale.setStyleSheet(self._make_button_style())
+        self.btn_auto_scale.setStyleSheet(btn_normal(t))
         self.btn_auto_scale.setToolTip("Сбросить масштаб")
         self.btn_auto_scale.clicked.connect(self.reset_view)
 
         self.btn_peak = QPushButton("Peak Hold")
         self.btn_peak.setCheckable(True)
         self.btn_peak.setChecked(True)
-        self.btn_peak.setStyleSheet(self._make_button_style("#2E7D32"))
+        self.btn_peak.setStyleSheet(btn_toggle(t))
         self.btn_peak.toggled.connect(self._on_peak_toggle)
 
         self.btn_reset_peak = QPushButton("⟲ Peak")
-        self.btn_reset_peak.setStyleSheet(self._make_button_style())
+        self.btn_reset_peak.setStyleSheet(btn_normal(t))
         self.btn_reset_peak.clicked.connect(self.clear_peak)
 
-        self.btn_mark = QPushButton("Метка")
+        self.btn_markers = QPushButton("Метки")
+        self.btn_markers.setCheckable(True)
+        self.btn_markers.setChecked(True)
+        self.btn_markers.setStyleSheet(btn_toggle(t))
+        self.btn_markers.setToolTip("Показать/скрыть все метки на графике")
+        self.btn_markers.toggled.connect(self._on_marks_visibility_toggle)
+
+        self.btn_mark = QPushButton("⊞ Метка")
         self.btn_mark.setCheckable(True)
-        self.btn_mark.setStyleSheet(self._make_button_style("#E65100"))
-        self.btn_mark.setToolTip("Режим меток: кликните на спектр для отметки частоты")
+        self.btn_mark.setStyleSheet(btn_toggle(t))
+        self.btn_mark.setToolTip("Режим добавления меток: кликните на спектр для отметки частоты")
 
         self.btn_clear_marks = QPushButton("✕ Метки")
-        self.btn_clear_marks.setStyleSheet(self._make_button_style())
+        self.btn_clear_marks.setStyleSheet(btn_normal(t))
         self.btn_clear_marks.setToolTip("Удалить все метки")
         self.btn_clear_marks.clicked.connect(self._on_clear_marks_clicked)
 
@@ -197,64 +198,56 @@ class LiveWidget(QWidget):
         self.btn_cursor.setCheckable(True)
         self.btn_cursor.setChecked(True)
         self.btn_cursor.setToolTip("Показывать частоту и уровень при наведении мыши")
-        self.btn_cursor.setStyleSheet(self._make_button_style("#00695C"))
+        self.btn_cursor.setStyleSheet(btn_toggle(t))
         self.btn_cursor.toggled.connect(self._on_cursor_toggle)
+
+        self._sep_cp = self._make_separator()
 
         self.btn_fullscreen = QPushButton("⛶")
         self.btn_fullscreen.setCheckable(True)
         self.btn_fullscreen.setFixedSize(28, 28)
         self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
-        self.btn_fullscreen.setStyleSheet(self._make_button_style("#2E7D32").replace(
-            "padding: 4px 8px", "padding: 2px"
-        ) + " font-size: 14px;")
+        self.btn_fullscreen.setStyleSheet(btn_icon(t, checkable=True))
         self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
 
         self.btn_stop_live = QPushButton("■")
         self.btn_stop_live.setFixedSize(28, 28)
         self.btn_stop_live.setToolTip("Остановить прямой эфир")
-        self.btn_stop_live.setStyleSheet(
-            "QPushButton { background-color: #C62828; color: white; border: none;"
-            " padding: 2px; border-radius: 3px; font-size: 12px; }"
-            " QPushButton:hover { background-color: #B71C1C; }"
-        )
+        self.btn_stop_live.setStyleSheet(btn_danger(t))
         self.btn_stop_live.clicked.connect(self.stop_requested)
 
         self.btn_resume_live = QPushButton("▶")
         self.btn_resume_live.setFixedSize(28, 28)
         self.btn_resume_live.setToolTip("Возобновить прямой эфир")
-        self.btn_resume_live.setStyleSheet(
-            "QPushButton { background-color: #2E7D32; color: white; border: none;"
-            " padding: 2px; border-radius: 3px; font-size: 12px; }"
-            " QPushButton:hover { background-color: #1B5E20; }"
-        )
+        self.btn_resume_live.setStyleSheet(btn_icon(t))
         self.btn_resume_live.clicked.connect(self.resume_requested)
         self.btn_resume_live.setVisible(False)
 
-        self._sep_cp = self._make_separator()
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
-                  self.btn_mark, self.btn_clear_marks, self.btn_cursor):
+                  self.btn_markers, self.btn_mark, self.btn_clear_marks, self.btn_cursor):
             cp.addWidget(w)
         cp.addWidget(self._sep_cp)
         for w in (self.btn_fullscreen, self.btn_stop_live, self.btn_resume_live):
             cp.addWidget(w)
 
     def _build_zoom_panel(self) -> None:
+        t = self._theme
         self.zoom_panel = QWidget(self._pw)
         self.zoom_panel.setStyleSheet(
-            "QWidget { background-color: rgba(40, 40, 40, 200); border-radius: 4px; }"
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
         zp = QHBoxLayout(self.zoom_panel)
         zp.setContentsMargins(5, 5, 5, 5)
-        zp.setSpacing(8)
+        zp.setSpacing(6)
 
         self.btn_zoom_in = QPushButton("+")
         self.btn_zoom_in.setFixedSize(28, 28)
-        self.btn_zoom_in.setStyleSheet(self._make_button_style())
+        self.btn_zoom_in.setStyleSheet(btn_icon(t))
         self.btn_zoom_in.clicked.connect(self._zoom_in)
 
         self.btn_zoom_out = QPushButton("−")
         self.btn_zoom_out.setFixedSize(28, 28)
-        self.btn_zoom_out.setStyleSheet(self._make_button_style())
+        self.btn_zoom_out.setStyleSheet(btn_icon(t))
         self.btn_zoom_out.clicked.connect(self._zoom_out)
 
         self.lbl_fps = QLabel("—")
@@ -336,16 +329,27 @@ class LiveWidget(QWidget):
             r, g, b, a = t["legend_brush"]
             self.legend.setBrush(pg.mkBrush(r, g, b, a))
 
-        btn = self._make_button_style()
         self.control_panel.setStyleSheet(
             f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
-        self.btn_auto_scale.setStyleSheet(btn)
-        self.btn_peak.setStyleSheet(self._make_button_style("#2E7D32"))
-        self.btn_reset_peak.setStyleSheet(btn)
-        self.btn_mark.setStyleSheet(self._make_button_style("#E65100"))
-        self.btn_clear_marks.setStyleSheet(btn)
-        self.btn_cursor.setStyleSheet(self._make_button_style("#00695C"))
+        self.btn_auto_scale.setStyleSheet(btn_normal(t))
+        self.btn_peak.setStyleSheet(btn_toggle(t))
+        self.btn_reset_peak.setStyleSheet(btn_normal(t))
+        self.btn_markers.setStyleSheet(btn_toggle(t))
+        self.btn_mark.setStyleSheet(btn_toggle(t))
+        self.btn_clear_marks.setStyleSheet(btn_normal(t))
+        self.btn_cursor.setStyleSheet(btn_toggle(t))
+        self.btn_fullscreen.setStyleSheet(btn_icon(t, checkable=True))
+        self.btn_stop_live.setStyleSheet(btn_danger(t))
+        self.btn_resume_live.setStyleSheet(btn_icon(t))
+        self._sep_cp.setStyleSheet(f"color: {t['sep']};")
+        self.zoom_panel.setStyleSheet(
+            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
+        )
+        self.btn_zoom_in.setStyleSheet(btn_icon(t))
+        self.btn_zoom_out.setStyleSheet(btn_icon(t))
+        self._sep_zp.setStyleSheet(f"color: {t['sep']};")
+        self.lbl_fps.setStyleSheet(f"color: {t['fps_fg']}; font-size: 11px; min-width: 45px;")
         cursor_pen = pg.mkPen(t["text_muted"], width=1, style=Qt.PenStyle.DotLine)
         self._cursor_vline.setPen(cursor_pen)
         self._cursor_hline.setPen(cursor_pen)
@@ -353,28 +357,6 @@ class LiveWidget(QWidget):
         self._cursor_label.fill = pg.mkBrush(*t["marker_label_fill"])
         self._cursor_label.border = pg.mkPen(t["border_input"])
         self._cursor_label.update()
-        self.btn_fullscreen.setStyleSheet(
-            self._make_button_style("#2E7D32").replace("padding: 4px 8px", "padding: 2px")
-            + " font-size: 14px;"
-        )
-        self.btn_stop_live.setStyleSheet(
-            f"QPushButton {{ background-color: #C62828; color: white; border: none;"
-            f" padding: 2px; border-radius: 3px; font-size: 12px; }}"
-            f" QPushButton:hover {{ background-color: #B71C1C; }}"
-        )
-        self.btn_resume_live.setStyleSheet(
-            f"QPushButton {{ background-color: #2E7D32; color: white; border: none;"
-            f" padding: 2px; border-radius: 3px; font-size: 12px; }}"
-            f" QPushButton:hover {{ background-color: #1B5E20; }}"
-        )
-        self._sep_cp.setStyleSheet(f"color: {t['sep']};")
-        self.zoom_panel.setStyleSheet(
-            f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
-        )
-        self.btn_zoom_in.setStyleSheet(btn)
-        self.btn_zoom_out.setStyleSheet(btn)
-        self._sep_zp.setStyleSheet(f"color: {t['sep']};")
-        self.lbl_fps.setStyleSheet(f"color: {t['fps_fg']}; font-size: 11px; min-width: 45px;")
 
     # ------------------------------------------------------------------
     # Публичный API
@@ -498,6 +480,7 @@ class LiveWidget(QWidget):
                 continue
             line = self._make_mark_line(f)
             line.setPos(f)
+            line.setVisible(self._marks_visible)
             pi.addItem(line)
             self._marked_lines.append(line)
             self.marked_freqs_mhz.append(float(f))
@@ -604,9 +587,25 @@ class LiveWidget(QWidget):
         self._cursor_label.setText(f" {freq_mhz:.3f} МГц\n {amp_db:.1f} дБ")
         self._cursor_label.setVisible(True)
 
+    def _on_marks_visibility_toggle(self, checked: bool) -> None:
+        self._marks_visible = checked
+        for line in self._marked_lines:
+            line.setVisible(checked)
+        if self._highlight_line is not None:
+            self._highlight_line.setVisible(checked and self._highlight_enabled)
+
     def _on_clear_marks_clicked(self) -> None:
-        self.clear_marks()
-        self.marks_cleared.emit()
+        if not self.marked_freqs_mhz:
+            return
+        reply = QMessageBox.question(
+            self, "Удаление меток",
+            "Удалить все пользовательские метки?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.clear_marks()
+            self.marks_cleared.emit()
 
     def _on_peak_toggle(self, checked: bool) -> None:
         self._show_peak = checked
@@ -632,6 +631,7 @@ class LiveWidget(QWidget):
             return
         line = self._make_mark_line(freq_mhz)
         line.setPos(freq_mhz)
+        line.setVisible(self._marks_visible)
         self._pw.getPlotItem().addItem(line)
         self._marked_lines.append(line)
         self.marked_freqs_mhz.append(freq_mhz)
