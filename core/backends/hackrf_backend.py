@@ -8,51 +8,46 @@ from .base import BaseInstrument
 from ..config import PanoramaConfig
 from ..models import Spectrum
 
+_IS_STREAMING = 1
+
 
 class HackRfBackend(BaseInstrument):
     """HackRF One бэкенд.
-
-    Требует: pip install pyhackrf  (устанавливается как модуль hackrf)
+    Требует: pip install pyhackrf
     Частоты:    1 МГц — 6 ГГц
     Sample rate: 1 МГц — 20 МГц
-    LNA gain:   0, 8, 16, 24, 32, 40 дБ (фиксирован на _DEFAULT_LNA_GAIN)
-    VGA gain:   0–62 дБ шаг 2 дБ  (задаётся через cfg.sdr_gain_db)
+    LNA gain:   0, 8, 16, 24, 32, 40 дБ
+    VGA gain:   0–62 дБ шаг 2 дБ
 
-    Вместо pyhackrf.read_samples() используется собственный callback
-    с threading.Event — это устраняет HACKRF_ERROR_BUSY (-6) и
-    позволяет чисто прерывать захват при остановке потока.
+    Реализует собственный RX callback с автовосстановлением потока
+    и защитой от исключений, что устраняет зависания и тайм-ауты.
     """
 
-    _SAFE_SR       = 20_000_000   # 20 МГц — максимальный стабильный SR
-    _USABLE_BW     = 17_000_000   # порог одиночного захвата (live)
-    _SWEEP_STEP_BW = 15_000_000   # шаг sweep — плоская зона АЧХ тюнера
+    _SAFE_SR       = 20_000_000
+    _USABLE_BW     = 17_000_000
+    _SWEEP_STEP_BW = 15_000_000
+    _DEFAULT_LNA_GAIN = 24
 
-    _DEFAULT_LNA_GAIN = 24        # дБ (кратно 8: 0, 8, 16, 24, 32, 40)
-
-    # Тайм-аут сбора одной порции сэмплов
-    _COLLECT_TIMEOUT_S = 3.0
-    # Пауза после hackrf_stop_rx перед следующим hackrf_start_rx
-    _STOP_DELAY_S      = 0.05
+    _COLLECT_TIMEOUT_S = 3.0      # тайм-аут одной порции (сек)
+    _COLLECT_MAX_RETRIES = 2      # повторов при тайм-ауте
+    _PLL_SETTLE_MS     = 8        # ожидание PLL после смены частоты
 
     def __init__(self, device_index: int = 0):
         self._device: HackRF | None = None
         self._device_index = device_index
         self._cfg: PanoramaConfig | None = None
 
-        # --- Состояние собственного RX callback ---
         self._rx_lock    = threading.Lock()
         self._rx_buffer  = bytearray()
         self._rx_needed  = 0
         self._rx_done    = threading.Event()
         self._rx_abort   = threading.Event()
-        # Ссылка на ctypes-callback: без неё GC уничтожит объект во время стриминга
         self._c_rx_cb    = None
         self._streaming  = False
 
     # ------------------------------------------------------------------
-    # BaseInstrument interface
+    # BaseInstrument
     # ------------------------------------------------------------------
-
     @property
     def name(self) -> str:
         return f"HackRF One (устройство {self._device_index})"
@@ -70,7 +65,7 @@ class HackRfBackend(BaseInstrument):
         except Exception as e:
             raise RuntimeError(
                 f"Не удалось подключить HackRF One: {e}. "
-                "Проверьте подключение и убедитесь, что устройство не занято другой программой."
+                "Проверьте подключение и убедитесь, что устройство не занято."
             )
 
     def close(self) -> None:
@@ -83,84 +78,104 @@ class HackRfBackend(BaseInstrument):
             self._device = None
 
     # ------------------------------------------------------------------
-    # Собственный RX callback (заменяет pyhackrf.read_samples)
+    # RX Callback & Streaming
     # ------------------------------------------------------------------
-
     def _rx_callback(self, transfer_ptr) -> int:
-        """Вызывается из потока libhackrf при каждом USB-трансфере."""
-        if self._rx_abort.is_set() or self._rx_done.is_set():
+        """Вызывается из потока libhackrf. Любое исключение здесь убивает RX-поток."""
+        try:
+            if self._rx_abort.is_set() or self._rx_done.is_set():
+                return 0
+            c = transfer_ptr.contents
+            n = c.buffer_length
+            values = cast(c.buffer, POINTER(c_byte * n)).contents
+            with self._rx_lock:
+                needed = self._rx_needed - len(self._rx_buffer)
+                if needed > 0:
+                    take = min(n, needed)
+                    self._rx_buffer.extend(bytearray(values)[:take])
+                    if len(self._rx_buffer) >= self._rx_needed:
+                        self._rx_done.set()
             return 0
-        c = transfer_ptr.contents
-        n = c.buffer_length
-        values = cast(c.buffer, POINTER(c_byte * n)).contents
-        with self._rx_lock:
-            needed = self._rx_needed - len(self._rx_buffer)
-            if needed > 0:
-                take = min(n, needed)
-                self._rx_buffer.extend(bytearray(values)[:take])
-                if len(self._rx_buffer) >= self._rx_needed:
-                    self._rx_done.set()
-        return 0
+        except Exception:
+            # Критически важно: callback не должен бросать исключения
+            return 0
 
     def _start_streaming(self) -> None:
-        if self._streaming or self._device is None:
+        if self._device is None:
             return
-        self._c_rx_cb = _hackrf._callback(self._rx_callback)
+        # Синхронизация с железом
+        hw_status = libhackrf.hackrf_is_streaming(self._device.dev_p)
+        if hw_status == _IS_STREAMING and self._streaming:
+            return  # Уже работает
+
+        self._streaming = False
+        if self._c_rx_cb is None:
+            self._c_rx_cb = _hackrf._callback(self._rx_callback)
+
         result = libhackrf.hackrf_start_rx(self._device.dev_p, self._c_rx_cb, None)
+        if result == -6:  # HACKRF_ERROR_BUSY
+            time.sleep(0.05)
+            result = libhackrf.hackrf_start_rx(self._device.dev_p, self._c_rx_cb, None)
+
         if result != 0:
-            raise RuntimeError(f"hackrf_start_rx: код ошибки {result}")
+            raise RuntimeError(f"hackrf_start_rx failed: код {result}")
         self._streaming = True
 
     def _stop_streaming(self, wait: bool = True) -> None:
         if not self._streaming or self._device is None:
             return
-        self._rx_abort.set()          # сигнал callback'у: не накапливать
+        self._rx_abort.set()
         libhackrf.hackrf_stop_rx(self._device.dev_p)
         if wait:
-            # Дождаться полной остановки USB-трансфера
             deadline = time.perf_counter() + 0.5
             while time.perf_counter() < deadline:
-                if libhackrf.hackrf_is_streaming(self._device.dev_p) != 1:
+                if libhackrf.hackrf_is_streaming(self._device.dev_p) != _IS_STREAMING:
                     break
                 time.sleep(0.01)
-            time.sleep(self._STOP_DELAY_S)
         self._streaming = False
         self._rx_abort.clear()
+        self._rx_done.clear()
 
     def _collect_samples(self, num_samples: int) -> np.ndarray:
-        """Собрать num_samples IQ-сэмплов из активного стриминга.
-
-        threading.Event гарантирует возврат за _COLLECT_TIMEOUT_S секунд
-        в любых условиях — поток LiveWorker не зависает при остановке.
-        """
+        """Сбор сэмплов с автовосстановлением при обрыве USB-потока."""
         num_bytes = num_samples * 2
         with self._rx_lock:
-            self._rx_buffer = bytearray()
+            self._rx_buffer.clear()
             self._rx_needed = num_bytes
         self._rx_done.clear()
         self._rx_abort.clear()
 
         self._start_streaming()
 
-        if not self._rx_done.wait(timeout=self._COLLECT_TIMEOUT_S):
-            # Тайм-аут: прерываем и бросаем ошибку
+        # Проверка реального статуса потока перед ожиданием
+        if libhackrf.hackrf_is_streaming(self._device.dev_p) != _IS_STREAMING:
+            self._streaming = False
+            self._start_streaming()
+
+        for attempt in range(self._COLLECT_MAX_RETRIES):
+            if self._rx_done.wait(timeout=self._COLLECT_TIMEOUT_S):
+                break
+            # Тайм-аут: принудительный рестарт потока
+            self._stop_streaming(wait=False)
+            time.sleep(0.1)
+            self._start_streaming()
+        else:
             self._rx_abort.set()
             raise RuntimeError(
-                f"HackRF: тайм-аут {self._COLLECT_TIMEOUT_S:.0f} с при сборе сэмплов"
+                f"HackRF: тайм-аут {self._COLLECT_TIMEOUT_S:.0f} с при сборе сэмплов "
+                f"({self._COLLECT_MAX_RETRIES} попыток). Проверьте USB-кабель, питание или уменьшите fft_size."
             )
 
         with self._rx_lock:
             data = bytes(self._rx_buffer[:num_bytes])
 
-        # bytes2iq: int8 → complex128, нормирование к ±1
         values = np.frombuffer(data, dtype=np.int8).astype(np.float64)
         iq = values.view(np.complex128) / 127.5
         return iq
 
     # ------------------------------------------------------------------
-    # Вспомогательные методы конфигурации
+    # Конфигурация
     # ------------------------------------------------------------------
-
     def _use_single(self, cfg: PanoramaConfig) -> bool:
         fast = cfg.averaging_count <= 1 and not cfg.use_max_hold
         span = cfg.stop_freq_hz - cfg.start_freq_hz
@@ -169,21 +184,17 @@ class HackRfBackend(BaseInstrument):
 
     @staticmethod
     def _snap_vga(gain_db: float) -> int:
-        """Ближайший допустимый VGA gain (чётные 0–62 дБ)."""
         return int(np.clip(round(gain_db / 2) * 2, 0, 62))
 
     @staticmethod
     def _snap_lna(gain_db: float) -> int:
-        """Ближайший допустимый LNA gain (кратно 8, 0–40 дБ)."""
         return int(np.clip(round(gain_db / 8) * 8, 0, 40))
 
     def configure(self, cfg: PanoramaConfig) -> None:
         if not self._device:
             raise RuntimeError("HackRF не подключён.")
 
-        # Останавливаем стриминг перед изменением частоты/SR/gain
         self._stop_streaming()
-
         self._cfg = cfg
         span = cfg.stop_freq_hz - cfg.start_freq_hz
 
@@ -199,22 +210,17 @@ class HackRfBackend(BaseInstrument):
         self._device.center_freq = center
         self._device.lna_gain    = self._snap_lna(self._DEFAULT_LNA_GAIN)
         self._device.vga_gain    = self._snap_vga(cfg.sdr_gain_db)
-        if cfg.sdr_gain_db > 50:
-            self._device.enable_amp()
-        else:
-            self._device.disable_amp()
+        self._device.enable_amp() if cfg.sdr_gain_db > 50 else self._device.disable_amp()
 
-        # Запускаем стриминг заранее — первый захват не теряет время на старт RX
         self._start_streaming()
 
     # ------------------------------------------------------------------
     # Захват спектра
     # ------------------------------------------------------------------
-
-    _SWEEP_SETTLE_S        = 0.05
-    _SWEEP_SETTLE_FAST_S   = 0.05
-    _CAPTURE_SETTLE_S      = 0.010
-    _CAPTURE_SETTLE_FAST_S = 0.010
+    _SWEEP_SETTLE_S        = 0.010
+    _SWEEP_SETTLE_FAST_S   = 0.010
+    _CAPTURE_SETTLE_S      = 0.005
+    _CAPTURE_SETTLE_FAST_S = 0.005
 
     def capture_spectrum(self) -> Spectrum:
         if not self._device or not self._cfg:
@@ -241,7 +247,7 @@ class HackRfBackend(BaseInstrument):
             raw_arr = self._collect_samples(cfg.fft_size)
             if len(raw_arr) < cfg.fft_size:
                 break
-            raw_arr -= raw_arr.mean()   # DC-block
+            raw_arr -= raw_arr.mean()
             fft_vals = np.fft.fftshift(np.fft.fft(raw_arr * window))
             power = np.abs(fft_vals) ** 2
             avg_power += power
@@ -268,7 +274,7 @@ class HackRfBackend(BaseInstrument):
 
     def _capture_sweep(self, cfg: PanoramaConfig, fast: bool = False) -> Spectrum:
         step     = self._SWEEP_STEP_BW
-        settle_s = self._SWEEP_SETTLE_FAST_S if fast else self._SWEEP_SETTLE_S
+        settle_ms = self._PLL_SETTLE_MS
 
         centers = []
         c = cfg.start_freq_hz + step / 2
@@ -280,12 +286,8 @@ class HackRfBackend(BaseInstrument):
         all_db:    list[np.ndarray] = []
 
         for center in centers:
-            # Смена частоты требует перезапуска стриминга
-            self._stop_streaming()
-            self._device.sample_rate = self._SAFE_SR
             self._device.center_freq = int(center)
-            time.sleep(settle_s)
-            self._start_streaming()
+            time.sleep(settle_ms / 1000.0)
 
             step_start = max(center - step / 2, cfg.start_freq_hz)
             step_stop  = min(center + step / 2, cfg.stop_freq_hz)
