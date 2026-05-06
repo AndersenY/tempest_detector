@@ -157,10 +157,10 @@ class ExpertPanel(QGroupBox):
         """Синхронизировать состояние кнопки с внешним управлением (MainWindow)."""
         self._btn_zero_span.setChecked(active)
         if active:
-            self._btn_zero_span.setText("⏹  Стоп Zero Span")
+            self._btn_zero_span.setText("Стоп Zero Span")
             self._btn_zero_span.setStyleSheet(self._btn_active_qss())
         else:
-            self._btn_zero_span.setText("▶  Zero Span + Аудио")
+            self._btn_zero_span.setText("Zero Span + Аудио")
             self._btn_zero_span.setStyleSheet(self._btn_qss())
 
     # ------------------------------------------------------------------
@@ -221,7 +221,7 @@ class ExpertPanel(QGroupBox):
         root.addLayout(row2)
 
         # ── Zero Span + аудиомонитор ─────────────────────────────────
-        self._btn_zero_span = QPushButton("▶  Zero Span + Аудио")
+        self._btn_zero_span = QPushButton("Zero Span + Аудио")
         self._btn_zero_span.setCheckable(True)
         self._btn_zero_span.setStyleSheet(self._btn_qss())
         self._btn_zero_span.setToolTip(
@@ -255,8 +255,8 @@ class ExpertPanel(QGroupBox):
             )
             colors = {"green": "#66BB6A", "red": "#EF5350", "blue": "#42A5F5",
                       "yellow": "#FFCA28"}
-            labels = {"green": "✅ ПЭМИН", "red": "❌ Брак (В1)",
-                      "blue": "〇 Внешний", "yellow": "⏳ Ожидание"}
+            labels = {"green": "ПЭМИН", "red": "Брак (В1)",
+                      "blue": "Внешний", "yellow": "Ожидание"}
             c = sig.status_color
             color_str = colors.get(c, "#aaa")
             label_str = labels.get(c, c)

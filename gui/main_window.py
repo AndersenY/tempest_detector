@@ -60,14 +60,14 @@ class _StatusDelegate(QStyledItemDelegate):
     """Делегат для колонки «Статус»: редактирование через выпадающий список."""
 
     _OPTIONS = [
-        ("✅ ПЭМИН",         "#66BB6A", "green"),
-        ("❌ Брак (В1)",      "#EF5350", "red"),
-        ("〇 Внешний (В2)",  "#42A5F5", "blue"),
-        ("〇 Двойной брак",  "#42A5F5", "blue"),
-        ("⏳ В1 OK",          "#FFCA28", "yellow"),
-        ("⏳ Ожидание",       "#9E9E9E", "yellow"),
-        ("📌 Потенциальный",  "#FFCA28", "yellow"),
-        ("❌ Гармоник нет",   "#EF5350", "red"),
+        ("ПЭМИН",           "#66BB6A", "green"),
+        ("Брак (В1)",        "#EF5350", "red"),
+        ("Внешний (В2)",     "#42A5F5", "blue"),
+        ("Двойной брак",     "#42A5F5", "blue"),
+        ("В1 OK",            "#FFCA28", "yellow"),
+        ("Ожидание",         "#9E9E9E", "yellow"),
+        ("Потенциальный",    "#FFCA28", "yellow"),
+        ("Гармоник нет",     "#EF5350", "red"),
     ]
 
     # Цвета по умолчанию (тёмная тема); обновляются через set_theme()
@@ -217,7 +217,7 @@ class MainWindow(QMainWindow):
 
         menu_mode.addSeparator()
 
-        self.act_mode_harmonic = QAction("〜  Метод поиска по гармоникам", self)
+        self.act_mode_harmonic = QAction("Метод поиска по гармоникам", self)
         self.act_mode_harmonic.setCheckable(True)
         self.act_mode_harmonic.triggered.connect(lambda: self._set_scan_mode("harmonic"))
         mode_group.addAction(self.act_mode_harmonic)
@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
         self.act_load.triggered.connect(self._load_measurement)
         menu_action.addAction(self.act_load)
 
-        self.act_compare = QAction("⚖  Сравнить две сессии", self)
+        self.act_compare = QAction("Сравнить две сессии", self)
         self.act_compare.triggered.connect(self._compare_sessions)
         menu_action.addAction(self.act_compare)
 
@@ -463,7 +463,7 @@ class MainWindow(QMainWindow):
         self._settle_timer.setSingleShot(True)
         self._settle_timer.timeout.connect(self._finish_semi_auto_resume)
 
-        self.btn_stop = QPushButton("↺ СБРОС")
+        self.btn_stop = QPushButton("СБРОС")
         self.btn_stop.setStyleSheet("""
             QPushButton { background-color: #D32F2F; color: white; font-weight: bold;
                           padding: 5px 15px; border-radius: 4px; }
@@ -617,7 +617,7 @@ class MainWindow(QMainWindow):
 
         # Строка 3: статус подключений + буфер
         status_row = QHBoxLayout()
-        self._lbl_remote_clients = QLabel("● Нет подключений")
+        self._lbl_remote_clients = QLabel("Нет подключений")
         self._lbl_remote_clients.setStyleSheet("color:#888;")
         status_row.addWidget(self._lbl_remote_clients)
         status_row.addStretch()
@@ -921,14 +921,14 @@ class MainWindow(QMainWindow):
         if self.current_step == "live_preview":
             self._stop_panorama_preview()
             self.live_widget.set_live_running(False)
-            self.btn_action.setText("▶  ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
+            self.btn_action.setText("ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
             self.btn_action.setEnabled(True)
             self.btn_stop.setEnabled(False)
             self.lbl_instruction.setText(
-                "<b>⏸ Прямой эфир остановлен</b><br>"
+                "<b>Прямой эфир остановлен</b><br>"
                 "<span style='color:#aaa'>"
                 "График заморожен. Изучите спектр.<br>"
-                "Нажмите ▶ для возобновления, <b>▶ ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b> или <b>Сброс</b>.</span>"
+                "Нажмите «Возобновить» для продолжения, «ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ» или «СБРОС».</span>"
             )
         else:
             self._reset_to_start()
@@ -1017,7 +1017,7 @@ class MainWindow(QMainWindow):
                 if self.wf:
                     self.wf.resume()
                     self.btn_action.setEnabled(False)
-                    self.lbl_instruction.setText("⏳ Выполнение измерения...")
+                    self.lbl_instruction.setText("Выполнение измерения...")
                     self.btn_stop.setEnabled(True)
 
     # ------------------------------------------------------------------
@@ -1049,7 +1049,7 @@ class MainWindow(QMainWindow):
             self.btn_action.setEnabled(False)
             self.btn_stop.setEnabled(True)
             self.lbl_instruction.setText(
-                f"<b>⏳ Тест {label} — стабилизация {settle_ms} мс...</b><br>"
+                f"<b>Тест {label} — стабилизация {settle_ms} мс...</b><br>"
                 "<span style='color:#aaa'>Сетевой трафик затихает перед захватом спектра.</span>"
             )
             self._settle_timer.start(settle_ms)
@@ -1062,7 +1062,7 @@ class MainWindow(QMainWindow):
         if self.wf:
             self.wf.resume()
         self.btn_action.setEnabled(False)
-        self.lbl_instruction.setText("⏳ Выполнение измерения...")
+        self.lbl_instruction.setText("Выполнение измерения...")
         self.btn_stop.setEnabled(True)
 
     # ------------------------------------------------------------------
@@ -1224,7 +1224,7 @@ class MainWindow(QMainWindow):
 
         from PyQt6.QtWidgets import QMenu
         menu = QMenu(self)
-        act_del = menu.addAction("🗑  Удалить метку")
+        act_del = menu.addAction("Удалить метку")
         if menu.exec(self.table.viewport().mapToGlobal(pos)) == act_del:
             self._delete_bookmark(freq_hz)
 
@@ -1300,7 +1300,7 @@ class MainWindow(QMainWindow):
         self.current_step = "live_preview"
         self.live_widget.set_live_running(True)
         # Настройки НЕ блокируются — пользователь может менять их в реальном времени
-        self.btn_action.setText("▶  ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
+        self.btn_action.setText("ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(True)
         self._stop_zero_span()
@@ -1357,11 +1357,11 @@ class MainWindow(QMainWindow):
         self._refresh_bookmark_table()
 
         self.lbl_instruction.setText(
-            "<b>📡 Прямой эфир активен</b><br>"
+            "<b>Прямой эфир активен</b><br>"
             "<span style='color:#aaa'>"
             "Параметры можно менять в реальном времени — спектр обновится автоматически.<br>"
-            "Поставьте метки 📌 для важных частот, затем нажмите<br>"
-            "<b>▶ ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b></span>"
+            "Поставьте метки для важных частот, затем нажмите<br>"
+            "<b>ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b></span>"
         )
 
     def _stop_panorama_preview(self) -> None:
@@ -1416,7 +1416,7 @@ class MainWindow(QMainWindow):
     def _start_workflow(self):
         self.current_step = "running"
         self._set_settings_enabled(False)
-        self.lbl_instruction.setText("⏳ <b>Запуск процесса...</b>")
+        self.lbl_instruction.setText("<b>Запуск процесса...</b>")
         self.btn_action.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.act_save.setEnabled(False)
@@ -1729,7 +1729,7 @@ class MainWindow(QMainWindow):
         from datetime import datetime as dt
         ts = dt.fromtimestamp(on.timestamp).strftime("%d.%m.%Y %H:%M:%S")
         self.lbl_instruction.setText(
-            f"<b>📂 Архив загружен</b><br>"
+            f"<b>Архив загружен</b><br>"
             f"<span style='color:#aaa'>Время измерения: {ts}<br>"
             f"Сигналов: {len(signals)}</span>"
         )
@@ -1774,7 +1774,7 @@ class MainWindow(QMainWindow):
         ts_a = dt.fromtimestamp(on_a.timestamp).strftime("%d.%m.%Y %H:%M")
         ts_b = dt.fromtimestamp(on_b.timestamp).strftime("%d.%m.%Y %H:%M")
         self.lbl_instruction.setText(
-            f"<b>⚖ Режим сравнения</b><br>"
+            f"<b>Режим сравнения</b><br>"
             f"<span style='color:#FFC107'>■</span> Сессия A: {ts_a}<br>"
             f"<span style='color:#00BCD4'>■</span> Сессия B: {ts_b}"
         )
@@ -1989,13 +1989,13 @@ class MainWindow(QMainWindow):
     def _update_remote_status(self, count: int) -> None:
         self._lbl_remote_addr.setText(self._remote_server.local_address)
         if count == 0:
-            self._lbl_remote_clients.setText("● Нет подключений")
+            self._lbl_remote_clients.setText("Нет подключений")
             self._lbl_remote_clients.setStyleSheet(
                 f"color: {self._theme['clients_off']};"
             )
         else:
             noun = "клиент" if count == 1 else ("клиента" if count < 5 else "клиентов")
-            self._lbl_remote_clients.setText(f"● {count} {noun}")
+            self._lbl_remote_clients.setText(f"{count} {noun}")
             self._lbl_remote_clients.setStyleSheet("color:#66BB6A;")
 
     def _on_test_activate(self, active: bool) -> None:
@@ -2078,7 +2078,7 @@ class MainWindow(QMainWindow):
                 item_diff   = QTableWidgetItem("—")
                 item_on     = QTableWidgetItem("—")
                 item_off    = QTableWidgetItem("—")
-                item_status = QTableWidgetItem("📌 Потенциальный")
+                item_status = QTableWidgetItem("Потенциальный")
                 item_status.setForeground(QColor(COLOR_WARN))
                 for col, item in enumerate([item_freq, item_diff, item_on,
                                             item_off, item_harm, item_status]):
@@ -2104,42 +2104,39 @@ class MainWindow(QMainWindow):
 
             if s.detection_method == "harmonic_search":
                 if s.status_color == "green":
-                    status_text = f"✅ ПЭМИН ({s.harmonic_count} гарм.)"
+                    status_text = f"ПЭМИН ({s.harmonic_count} гарм.)"
                     color_hex = COLOR_SUCCESS
                 elif s.status_color == "yellow":
-                    status_text = f"⏳ Неопределённо ({s.harmonic_count} гарм.)"
+                    status_text = f"Неопределённо ({s.harmonic_count} гарм.)"
                     color_hex = COLOR_WARN
                 else:
-                    status_text = "❌ Гармоник нет"
+                    status_text = "Гармоник нет"
                     color_hex = COLOR_FAIL_V1
             else:
                 color_map = {
-                    "yellow": (COLOR_WARN,     "⏳ В1 OK"),
-                    "green":  (COLOR_SUCCESS,  "✅ ПЭМИН"),
-                    "red":    (COLOR_FAIL_V1,  "❌ Брак (В1)"),
-                    "blue":   (COLOR_EXTERNAL, "〇 Внешний / Двойной брак"),
+                    "yellow": (COLOR_WARN,     "В1 OK"),
+                    "green":  (COLOR_SUCCESS,  "ПЭМИН"),
+                    "red":    (COLOR_FAIL_V1,  "Брак (В1)"),
+                    "blue":   (COLOR_EXTERNAL, "Внешний / Двойной брак"),
                 }
                 v1 = s.verified_1
                 v2 = s.verified_2
                 if v1 is None and v2 is None:
-                    status_text = "⏳ Ожидание"
+                    status_text = "Ожидание"
                     color_hex = COLOR_WAIT
                 elif v1 is not None and v2 is None:
                     if v1:
-                        status_text = "⏳ В1 OK"
+                        status_text = "В1 OK"
                         color_hex = COLOR_WARN
                     else:
-                        status_text = "❌ Брак (В1)"
+                        status_text = "Брак (В1)"
                         color_hex = COLOR_FAIL_V1
                 else:
                     color_hex, status_text = color_map.get(
                         s.status_color, (COLOR_WAIT, "—")
                     )
                     if s.status_color == "blue":
-                        status_text = "〇 Внешний (В2)" if (v1 and not v2) else "〇 Двойной брак"
-
-            if s.detection_method == "bookmark":
-                status_text = "📌 " + status_text
+                        status_text = "Внешний (В2)" if (v1 and not v2) else "Двойной брак"
 
             item_status = QTableWidgetItem(status_text)
             item_status.setForeground(QColor(color_hex))

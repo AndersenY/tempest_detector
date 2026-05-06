@@ -183,7 +183,7 @@ class LiveWidget(QWidget):
         self.btn_reset_peak.setStyleSheet(self._make_button_style())
         self.btn_reset_peak.clicked.connect(self.clear_peak)
 
-        self.btn_mark = QPushButton("📌 Метка")
+        self.btn_mark = QPushButton("Метка")
         self.btn_mark.setCheckable(True)
         self.btn_mark.setStyleSheet(self._make_button_style("#E65100"))
         self.btn_mark.setToolTip("Режим меток: кликните на спектр для отметки частоты")

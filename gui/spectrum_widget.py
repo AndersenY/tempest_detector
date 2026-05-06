@@ -63,7 +63,7 @@ class SpectrumPlotWidget(QWidget):
         self.btn_auto_scale.setStyleSheet(_btn_style)
         self.btn_auto_scale.clicked.connect(self.reset_zoom)
 
-        self.btn_markers = QPushButton("👁 ПЭМИН")
+        self.btn_markers = QPushButton("ПЭМИН")
         self.btn_markers.setCheckable(True)
         self.btn_markers.setChecked(True)
         self.btn_markers.setToolTip("Отобразить на графике частоты")
@@ -75,7 +75,7 @@ class SpectrumPlotWidget(QWidget):
         """)
         self.btn_markers.toggled.connect(self._on_marker_toggle)
 
-        self.btn_mark_mode = QPushButton("📌 Метка")
+        self.btn_mark_mode = QPushButton("Метка")
         self.btn_mark_mode.setCheckable(True)
         self.btn_mark_mode.setToolTip("Режим меток: кликните на спектр для отметки частоты")
         self.btn_mark_mode.setStyleSheet(_btn_check_style)
@@ -412,7 +412,7 @@ class SpectrumPlotWidget(QWidget):
         self.markers_visible = checked
         for marker in self.signal_markers:
             marker.setVisible(checked)
-        self.btn_markers.setText("🙈 Скрыть" if checked else "👁 ПЭМИН")
+        self.btn_markers.setText("Скрыть" if checked else "ПЭМИН")
 
     def _on_mark_mode_toggle(self, checked: bool) -> None:
         self._mark_mode = checked
