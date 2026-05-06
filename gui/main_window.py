@@ -997,12 +997,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Управление процессом
     # ------------------------------------------------------------------
-
     def _on_live_stop_requested(self) -> None:
-        """Кнопка ■ на live_widget: в режиме live_preview — замораживаем граф
-        (не сбрасываем данные), в других режимах — полный сброс."""
+        """Кнопка ■ на live_widget: замораживаем график, сессия SDR сохраняется."""
         if self.current_step == "live_preview":
             self._stop_panorama_preview()
+            # self.ctrl.close() УБРАН → устройство остается подключенным
             self.live_widget.set_live_running(False)
             self.btn_action.setText("ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ")
             self.btn_action.setEnabled(True)
@@ -1010,16 +1009,17 @@ class MainWindow(QMainWindow):
             self.lbl_instruction.setText(
                 "<b>Прямой эфир остановлен</b><br>"
                 "<span style='color:#aaa'>"
-                "График заморожен. Изучите спектр.<br>"
-                "Нажмите «Возобновить» для продолжения, «ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ» или «СБРОС».</span>"
+                "График заморожен. Сессия SDR сохранена.<br>"
+                "Нажмите «Возобновить» для мгновенного продолжения или «СБРОС» для полного отключения.</span>"
             )
         else:
             self._reset_to_start()
 
     def _on_live_resume_requested(self) -> None:
-        """Кнопка ▶ на live_widget: перезапускает прямой эфир."""
+        """Кнопка ▶ на live_widget: перезапускает захват без переподключения."""
         if not self._apply_settings_to_cfg():
             return
+        # Устройство уже подключено и сконфигурировано → просто запускаем поток
         self._start_panorama_preview()
 
     # ------------------------------------------------------------------
@@ -1065,17 +1065,19 @@ class MainWindow(QMainWindow):
     def _reset_to_start(self):
         """Прерывает текущий процесс и возвращает программу в начальное состояние."""
         self._resetting = True
-        self.btn_action.setEnabled(False)   # блокируем повторный запуск
-        self._settle_timer.stop()           # отменяем буферную паузу если активна
+        self.btn_action.setEnabled(False)
+        self._settle_timer.stop()
 
         self._stop_panorama_preview()
         if self.wf:
             self.wf.stop()
 
-        # Ждём завершения потока перед освобождением SDR
-        # (предотвращает Segmentation fault при быстром нажатии Сброс → Старт)
         if self.thread is not None and self.thread.isRunning():
             self.thread.wait(10_000)
+
+        # ✅ Явно закрываем SDR, чтобы погасить диод RX
+        if self.ctrl and getattr(self.ctrl, 'is_connected', False):
+            self.ctrl.close()
 
         self._do_ui_reset()
 
@@ -2108,7 +2110,32 @@ class MainWindow(QMainWindow):
             self._remote_server.send_test_stop()
 
     def closeEvent(self, event) -> None:
+        # 1. Отменяем буферизацию и таймеры
+        self._settle_timer.stop()
+        
+        # 2. Останавливаем Live-просмотр (отключает хендлеры настроек + LiveWorker)
+        self._stop_panorama_preview()
+        
+        # 3. Останавливаем ZeroSpan и аудио-монитор
+        self._stop_zero_span()
+        
+        # 4. Останавливаем основной поток измерения
+        if self.thread is not None and self.thread.isRunning():
+            self.thread.wait(2000)  # 2 сек на graceful shutdown
+            
+        # 5. Останавливаем сервер удалённого управления
         self._remote_server.stop()
+        
+        # 6. КОРРЕКТНО закрываем SDR-бэкенд.
+        # HackRF: вызывает _stop_streaming() → hackrf_stop_rx() → hackrf_close() → hackrf_exit()
+        # RTL-SDR: вызывает rtlsdr_close()
+        if hasattr(self, 'ctrl') and self.ctrl is not None:
+            try:
+                self.ctrl.close()
+            except Exception as e:
+                print(f"⚠️ Ошибка при отключении SDR: {e}")
+                
+        # 7. Завершаем Qt-приложение
         super().closeEvent(event)
 
     def _plot_data(self, on, off, diff):
