@@ -348,17 +348,18 @@ class MainWindow(QMainWindow):
 
         # Прогресс-бар
         self.prog.setStyleSheet(
-            f"QProgressBar {{ border: 1px solid {t['border']}; border-radius: 4px;"
+            f"QProgressBar {{ border: 1px solid {t['border']}; border-radius: 2px;"
             f" text-align: center; color: {t['text']}; background-color: {t['bg_progress']}; }}"
-            f" QProgressBar::chunk {{ background-color: #2196F3; width: 10px; margin: 0.5px; }}"
+            f" QProgressBar::chunk {{ background-color: {t['progress_chunk']}; }}"
         )
 
-        # Кнопка сброс
+        # Кнопка СБРОС
         self.btn_stop.setStyleSheet(
-            f"QPushButton {{ background-color: #D32F2F; color: white; font-weight: bold;"
-            f" padding: 5px 15px; border-radius: 4px; }}"
-            f" QPushButton:hover {{ background-color: #B71C1C; }}"
-            f" QPushButton:disabled {{ background-color: {t['btn_bg']}; color: {t['text_off']}; }}"
+            f"QPushButton {{ background-color: {t['btn_danger']}; color: white;"
+            f" font-weight: bold; padding: 5px 15px; border-radius: 2px; border: none; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_danger_hover']}; }}"
+            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
+            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
         )
 
         # Таблица результатов
@@ -369,7 +370,7 @@ class MainWindow(QMainWindow):
             f" border: 1px solid {t['border']}; }}"
             f" QHeaderView::section {{ background-color: {t['bg_header']}; color: {t['text']};"
             f" padding: 4px; border: 1px solid {t['border']}; font-weight: bold; }}"
-            f" QTableWidget::item:selected {{ background-color: #2196F3; color: white; }}"
+            f" QTableWidget::item:selected {{ background-color: {t['btn_active']}; color: white; }}"
         )
 
         # Панель инструкции
@@ -421,11 +422,12 @@ class MainWindow(QMainWindow):
 
         # Кнопка действия
         self.btn_action.setStyleSheet(
-            f"QPushButton {{ background-color: #2196F3; color: white; font-weight: bold;"
-            f" padding: 12px; border-radius: 4px; font-size: 14px; border: none; }}"
-            f" QPushButton:hover {{ background-color: #1976D2; }}"
+            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
+            f" font-weight: bold; padding: 12px; border-radius: 2px;"
+            f" font-size: 14px; border: none; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
             f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; }}"
+            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
         )
 
         # Дочерние виджеты с pyqtgraph
@@ -456,10 +458,10 @@ class MainWindow(QMainWindow):
         self.prog.setTextVisible(True)
         self.prog.setStyleSheet("""
             QProgressBar {
-                border: 1px solid #444; border-radius: 4px;
-                text-align: center; color: white; background-color: #333;
+                border: 1px solid #444; border-radius: 2px;
+                text-align: center; color: #e0e0e0; background-color: #333;
             }
-            QProgressBar::chunk { background-color: #2196F3; width: 10px; margin: 0.5px; }
+            QProgressBar::chunk { background-color: #2b5a8c; }
         """)
         # Плавная анимация прогрессбара
         self._prog_anim = QPropertyAnimation(self.prog, b"value")
@@ -473,10 +475,10 @@ class MainWindow(QMainWindow):
 
         self.btn_stop = QPushButton("СБРОС")
         self.btn_stop.setStyleSheet("""
-            QPushButton { background-color: #D32F2F; color: white; font-weight: bold;
-                          padding: 5px 15px; border-radius: 4px; }
-            QPushButton:hover { background-color: #B71C1C; }
-            QPushButton:disabled { background-color: #555; color: #888; }
+            QPushButton { background-color: #8b2020; color: white; font-weight: bold;
+                          padding: 5px 15px; border-radius: 2px; border: none; }
+            QPushButton:hover { background-color: #a02828; }
+            QPushButton:disabled { background-color: #4a4a4a; color: #888; }
         """)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._reset_to_start)
@@ -655,10 +657,10 @@ class MainWindow(QMainWindow):
 
         self.btn_action = QPushButton("ПОДКЛЮЧИТЬ И НАЧАТЬ")
         self.btn_action.setStyleSheet("""
-            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
-                          padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
-            QPushButton:hover { background-color: #1976D2; }
-            QPushButton:disabled { background-color: #444; color: #888; }
+            QPushButton { background-color: #2b5a8c; color: white; font-weight: bold;
+                          padding: 12px; border-radius: 2px; font-size: 14px; border: none; }
+            QPushButton:hover { background-color: #1e3d5c; }
+            QPushButton:disabled { background-color: #4a4a4a; color: #888; }
         """)
         self.btn_action.clicked.connect(self._on_control_button_clicked)
         control_layout.addWidget(self.btn_action)
@@ -1818,14 +1820,16 @@ class MainWindow(QMainWindow):
                 "продолжение без участия оператора.</span>"
             )
 
-        color = "#FF9800"
+        t = self._theme
         if "ЗАВЕРШЕНА" in title or "ЗАВЕРШЕНО" in title:
-            color = "#4CAF50"
+            title_color = t["tbl_status_ok"]
         elif "ОШИБКА" in title or "СТОП" in title:
-            color = "#F44336"
+            title_color = t["tbl_status_fail"]
+        else:
+            title_color = t["text_dim"]
 
-        html_text = f"<h3 style='color: {color}; margin-bottom: 5px;'>{title}</h3>"
-        html_text += f"<div style='line-height: 1.4;'>{instruction.replace(chr(10), '<br>')}</div>"
+        html_text = f"<b style='color: {title_color};'>{title}</b>"
+        html_text += f"<div style='line-height: 1.4; margin-top: 4px;'>{instruction.replace(chr(10), '<br>')}</div>"
 
         self.lbl_instruction.setText(html_text)
         self.btn_action.setText(btn_text)
@@ -1833,19 +1837,17 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
 
         if "ЗАВЕРШЕНА" in title or "ЗАВЕРШЕНО" in title:
-            self.btn_action.setStyleSheet("""
-                QPushButton { background-color: #4CAF50; color: white; font-weight: bold;
-                              padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
-                QPushButton:hover { background-color: #388E3C; }
-            """)
             self.act_save.setEnabled(True)
             self.act_export_spectrum.setEnabled(self._last_on is not None)
-        else:
-            self.btn_action.setStyleSheet("""
-                QPushButton { background-color: #FF9800; color: white; font-weight: bold;
-                              padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
-                QPushButton:hover { background-color: #F57C00; }
-            """)
+
+        self.btn_action.setStyleSheet(
+            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
+            f" font-weight: bold; padding: 12px; border-radius: 2px;"
+            f" font-size: 14px; border: none; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
+            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
+            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
+        )
 
         if self.wf and hasattr(self.wf, "signals"):
             self._update_table_only()
@@ -1891,11 +1893,12 @@ class MainWindow(QMainWindow):
         )
         self._set_scan_mode(self.scan_mode)   # восстанавливает текст кнопки
         self.btn_action.setStyleSheet(
-            f"QPushButton {{ background-color: #2196F3; color: white; font-weight: bold;"
-            f" padding: 12px; border-radius: 4px; font-size: 14px; border: none; }}"
-            f" QPushButton:hover {{ background-color: #1976D2; }}"
+            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
+            f" font-weight: bold; padding: 12px; border-radius: 2px;"
+            f" font-size: 14px; border: none; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
             f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; }}"
+            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
         )
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(False)
@@ -1965,11 +1968,15 @@ class MainWindow(QMainWindow):
         self.current_step = "idle"
         self._set_settings_enabled(True)
         self.btn_action.setText("НОВЫЙ ПОИСК")
-        self.btn_action.setStyleSheet("""
-            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
-                          padding: 12px; border-radius: 4px; font-size: 14px; border: none; }
-            QPushButton:hover { background-color: #1976D2; }
-        """)
+        t = self._theme
+        self.btn_action.setStyleSheet(
+            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
+            f" font-weight: bold; padding: 12px; border-radius: 2px;"
+            f" font-size: 14px; border: none; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
+            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
+            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
+        )
         self.expert_panel.enable_remeasure(True)
         # Сбрасываем прогрессбар — готово к новому поиску
         self._reset_progress()

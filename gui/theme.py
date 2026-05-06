@@ -32,6 +32,10 @@ DARK: dict = {
     "btn_active":       "#2b5a8c",
     "btn_danger":       "#8b2020",
     "btn_danger_hover": "#a02828",
+    # Главная кнопка действия и прогрессбар
+    "btn_primary_bg":    "#2b5a8c",
+    "btn_primary_hover": "#1e3d5c",
+    "progress_chunk":    "#2b5a8c",
     # Expert panel buttons
     "expert_btn_bg":       "#3a3a3a",
     "expert_btn_fg":       "#e0e0e0",
@@ -50,8 +54,8 @@ DARK: dict = {
     "axis_pen":     "#555555",
     "legend_brush": (50, 50, 50, 200),
     # Special labels
-    "remote_title":  "#90CAF9",
-    "remote_addr":   "#90CAF9",
+    "remote_title":  "#aaaaaa",
+    "remote_addr":   "#aaaaaa",
     "clients_off":   "#888888",
     "fps_fg":        "#666666",
     "zs_title_fg":   "#e0e0e0",
@@ -112,14 +116,18 @@ LIGHT: dict = {
     "text_axis":      "#222222",
     "text_axis_dim":  "#444444",
     # Toolbar buttons
-    "btn_bg":           "#e2e2e2",
-    "btn_hover":        "#cccccc",
+    "btn_bg":           "#d8d8d8",
+    "btn_hover":        "#c4c4c4",
     "btn_fg":           "#1a1a1a",
-    "btn_fg_off":       "#4a4a4a",
-    "btn_border":       "#9e9e9e",
-    "btn_active":       "#2b5a8c",
-    "btn_danger":       "#8b2020",
-    "btn_danger_hover": "#a02828",
+    "btn_fg_off":       "#5a5a5a",
+    "btn_border":       "#a8a8a8",
+    "btn_active":       "#3a6ea8",
+    "btn_danger":       "#9e2a2a",
+    "btn_danger_hover": "#b83030",
+    # Главная кнопка действия и прогрессбар
+    "btn_primary_bg":    "#3a6ea8",
+    "btn_primary_hover": "#2a5280",
+    "progress_chunk":    "#3a6ea8",
     # Expert panel buttons
     "expert_btn_bg":       "#e8e8e8",
     "expert_btn_fg":       "#1a1a1a",
@@ -138,8 +146,8 @@ LIGHT: dict = {
     "axis_pen":     "#aaaaaa",
     "legend_brush": (245, 245, 245, 210),
     # Special labels
-    "remote_title":  "#1565C0",
-    "remote_addr":   "#1565C0",
+    "remote_title":  "#666666",
+    "remote_addr":   "#666666",
     "clients_off":   "#777777",
     "fps_fg":        "#888888",
     "zs_title_fg":   "#1a1a1a",
