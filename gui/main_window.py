@@ -434,9 +434,9 @@ class MainWindow(QMainWindow):
         self.zero_span_widget.apply_theme(t)
         self.expert_panel.apply_theme(t)
 
-        # Перекрасить таблицу и маркеры на графике, если есть результаты
+        # Перекрасить статусы в таблице и маркеры ПЭМИН на графике
+        self._refresh_table_colors()
         if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
-            self._update_table_from_signals(self.wf.signals)
             self.plot.plot_signals(self.wf.signals)
 
     def _init_ui(self):
@@ -2049,6 +2049,15 @@ class MainWindow(QMainWindow):
             else:
                 # Сигналов ещё нет — показываем метки пока идёт фаза 1
                 self._refresh_bookmark_table()
+
+    def _refresh_table_colors(self) -> None:
+        """Перекрасить ячейки статуса в таблице под текущую тему без пересборки строк."""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 5)
+            if item:
+                item.setForeground(
+                    QColor(self._status_delegate.color_for(item.text()))
+                )
 
     # ------------------------------------------------------------------
     # Таблица результатов

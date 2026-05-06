@@ -324,6 +324,10 @@ class SpectrumPlotWidget(QWidget):
                 pg.mkPen(t["curve_diff"], width=2, style=Qt.PenStyle.DashLine)
             )
 
+        # Обновить пользовательские метки (panorama marks)
+        for mark in self._panorama_marks:
+            mark.setPen(pg.mkPen(t["panorama_mark"], width=1.5, style=Qt.PenStyle.DashLine))
+
         # Обновить ПЭМИН-маркеры
         _tag_to_key = {"bookmark": "sig_bookmark", "pending": "sig_pending",
                        "confirmed": "sig_confirmed"}
