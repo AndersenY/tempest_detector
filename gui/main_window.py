@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.config import PanoramaConfig
-from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator
+from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator, HackRfBackend
 from core.models import Spectrum, PEMINSignal
 from core.methods import PanoramaDiffWorkflow, HarmonicSearchWorkflow
 from core.audio_monitor import AudioMonitor
@@ -163,6 +163,10 @@ class MainWindow(QMainWindow):
 
         self._theme = DARK
         self.cfg = PanoramaConfig()
+        self._hw = "rtlsdr"
+        self._live_bw_hz  = 2_000_000
+        self._freq_min_hz = 24e6
+        self._freq_max_hz = 1750e6
         self.ctrl: BaseInstrument = RtlSdrBackend()
         self.wf = None
         self.thread = None
@@ -278,6 +282,24 @@ class MainWindow(QMainWindow):
         self.act_export_spectrum.triggered.connect(self._export_spectrum)
         menu_action.addAction(self.act_export_spectrum)
 
+        # ── Устройство ────────────────────────────────────────────────
+        menu_hw = mb.addMenu("Устройство")
+        hw_group = QActionGroup(self)
+        hw_group.setExclusive(True)
+
+        self.act_hw_rtlsdr = QAction("RTL-SDR", self)
+        self.act_hw_rtlsdr.setCheckable(True)
+        self.act_hw_rtlsdr.setChecked(True)
+        self.act_hw_rtlsdr.triggered.connect(lambda: self._set_hw("rtlsdr"))
+        hw_group.addAction(self.act_hw_rtlsdr)
+        menu_hw.addAction(self.act_hw_rtlsdr)
+
+        self.act_hw_hackrf = QAction("HackRF One", self)
+        self.act_hw_hackrf.setCheckable(True)
+        self.act_hw_hackrf.triggered.connect(lambda: self._set_hw("hackrf"))
+        hw_group.addAction(self.act_hw_hackrf)
+        menu_hw.addAction(self.act_hw_hackrf)
+
         # ── Вид ───────────────────────────────────────────────────────
         menu_view = mb.addMenu("Вид")
         theme_group = QActionGroup(self)
@@ -318,6 +340,54 @@ class MainWindow(QMainWindow):
             self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
         # Колонка «Гармоники» — только для harmonic-режима
         self.table.setColumnHidden(4, mode != "harmonic")
+
+    # ------------------------------------------------------------------
+    # Выбор устройства
+    # ------------------------------------------------------------------
+
+    def _set_hw(self, hw: str) -> None:
+        if hw == self._hw:
+            return
+        if self.current_step != "idle":
+            self._hw = hw
+            self._reset_to_start()
+            return
+        self._hw = hw
+        self._update_hw_limits()
+
+    def _update_hw_limits(self) -> None:
+        """Обновляет лимиты частот и live BW под текущий бэкенд."""
+        if self._hw == "hackrf":
+            self._live_bw_hz  = 10_000_000
+            self._freq_min_hz = 1e6
+            self._freq_max_hz = 6000e6
+            self.spin_start_freq.setRange(1, 6000)
+            self.spin_stop_freq.setRange(2, 6000)
+            self.spin_gain.setRange(0, 62)
+        else:
+            self._live_bw_hz  = 2_000_000
+            self._freq_min_hz = 24e6
+            self._freq_max_hz = 1750e6
+            self.spin_start_freq.setRange(24, 1750)
+            self.spin_stop_freq.setRange(25, 1750)
+            self.spin_gain.setRange(0, 50)
+
+    def _make_backend(self) -> BaseInstrument:
+        """Создать экземпляр бэкенда под текущий self._hw."""
+        if self._hw == "hackrf":
+            if HackRfBackend is None:
+                raise RuntimeError(
+                    "Библиотека hackrf не установлена.\n"
+                    "Установите: conda install -c conda-forge hackrf\n"
+                    "или: pip install hackrf"
+                )
+            return HackRfBackend()
+        if RtlSdrBackend is None:
+            raise RuntimeError(
+                "Библиотека pyrtlsdr не установлена.\n"
+                "Установите: conda install -c conda-forge pyrtlsdr"
+            )
+        return RtlSdrBackend()
 
     # ------------------------------------------------------------------
     # Тема оформления
@@ -1087,10 +1157,12 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # Если устройство уже открыто — только переконфигурируем.
+            # RTL-SDR: если устройство уже открыто — только переконфигурируем.
             # close() → open() в librtlsdr вызывает повреждение кучи (malloc corruption),
             # потому что внутренние USB-потоки не успевают завершиться.
-            if isinstance(self.ctrl, RtlSdrBackend) and self.ctrl.is_connected:
+            if RtlSdrBackend is not None \
+                    and isinstance(self.ctrl, RtlSdrBackend) \
+                    and self._hw == "rtlsdr" and self.ctrl.is_connected:
                 try:
                     self.ctrl.configure(self.cfg)
                 except Exception:
@@ -1101,12 +1173,22 @@ class MainWindow(QMainWindow):
                     self.ctrl = RtlSdrBackend()
                     self.ctrl.connect()
                     self.ctrl.configure(self.cfg)
+            elif HackRfBackend is not None \
+                    and isinstance(self.ctrl, HackRfBackend) \
+                    and self._hw == "hackrf" and self.ctrl.is_connected:
+                try:
+                    self.ctrl.configure(self.cfg)
+                except Exception:
+                    self.ctrl.close()
+                    self.ctrl = HackRfBackend()
+                    self.ctrl.connect()
+                    self.ctrl.configure(self.cfg)
             else:
                 try:
                     self.ctrl.close()
                 except Exception:
                     pass
-                self.ctrl = RtlSdrBackend()
+                self.ctrl = self._make_backend()
                 self.ctrl.connect()
                 self.ctrl.configure(self.cfg)
             self._start_panorama_preview()
@@ -1131,22 +1213,22 @@ class MainWindow(QMainWindow):
         cfg.use_max_hold    = False
         if self.cfg.fft_size != 8192:
             cfg.calibration_offset_db += 20.0 * np.log10(self.cfg.fft_size / 8192)
-        _LIVE_BW = 2_000_000
+        _LIVE_BW = self._live_bw_hz
         if self.chk_lock_bw.isChecked():
             sender = self.sender()
             if sender is self.spin_start_freq:
                 # пользователь изменил начало — сохраняем полосу, двигаем конец
-                cfg.stop_freq_hz  = min(1750e6, cfg.start_freq_hz + _LIVE_BW)
+                cfg.stop_freq_hz  = min(self._freq_max_hz, cfg.start_freq_hz + _LIVE_BW)
                 cfg.start_freq_hz = cfg.stop_freq_hz - _LIVE_BW
             elif sender is self.spin_stop_freq:
                 # пользователь изменил конец — сохраняем полосу, двигаем начало
-                cfg.start_freq_hz = max(24e6, cfg.stop_freq_hz - _LIVE_BW)
+                cfg.start_freq_hz = max(self._freq_min_hz, cfg.stop_freq_hz - _LIVE_BW)
                 cfg.stop_freq_hz  = cfg.start_freq_hz + _LIVE_BW
             else:
-                # галка или другой виджет — центрируем окно 2 МГц
+                # галка или другой виджет — центрируем окно live BW
                 center = (cfg.start_freq_hz + cfg.stop_freq_hz) / 2
-                cfg.start_freq_hz = max(24e6,   center - _LIVE_BW / 2)
-                cfg.stop_freq_hz  = min(1750e6, center + _LIVE_BW / 2)
+                cfg.start_freq_hz = max(self._freq_min_hz, center - _LIVE_BW / 2)
+                cfg.stop_freq_hz  = min(self._freq_max_hz, center + _LIVE_BW / 2)
             # синхронизируем спиннеры с реальным диапазоном SDR
             self.spin_start_freq.blockSignals(True)
             self.spin_stop_freq.blockSignals(True)
@@ -1174,19 +1256,19 @@ class MainWindow(QMainWindow):
             return
         from copy import copy as _copy
         cfg = _copy(self.cfg)
-        _LIVE_BW = 2_000_000
+        _LIVE_BW = self._live_bw_hz
         if self.chk_lock_bw.isChecked():
-            # Всегда 2 МГц по центру вида — без sweep и лагов
+            # Фиксированная полоса по центру вида — без sweep и лагов
             center_hz = (start_mhz + stop_mhz) / 2 * 1e6
-            cfg.start_freq_hz = max(24e6,   center_hz - _LIVE_BW / 2)
-            cfg.stop_freq_hz  = min(1750e6, center_hz + _LIVE_BW / 2)
+            cfg.start_freq_hz = max(self._freq_min_hz, center_hz - _LIVE_BW / 2)
+            cfg.stop_freq_hz  = min(self._freq_max_hz, center_hz + _LIVE_BW / 2)
             # Спиннеры показывают реальный диапазон SDR, а не диапазон вида
             spin_start = cfg.start_freq_hz / 1e6
             spin_stop  = cfg.stop_freq_hz  / 1e6
         else:
             span_hz = (stop_mhz - start_mhz) * 1e6
-            cfg.start_freq_hz = max(24e6,   start_mhz * 1e6 - span_hz * 0.05)
-            cfg.stop_freq_hz  = min(1750e6, stop_mhz  * 1e6 + span_hz * 0.05)
+            cfg.start_freq_hz = max(self._freq_min_hz, start_mhz * 1e6 - span_hz * 0.05)
+            cfg.stop_freq_hz  = min(self._freq_max_hz, stop_mhz  * 1e6 + span_hz * 0.05)
             spin_start = start_mhz
             spin_stop  = stop_mhz
         # Обновляем спиннеры без срабатывания _on_preview_settings_changed
@@ -1333,13 +1415,13 @@ class MainWindow(QMainWindow):
         prev_cfg.use_max_hold = False
         if self.cfg.fft_size != 8192:
             prev_cfg.calibration_offset_db += 20.0 * np.log10(self.cfg.fft_size / 8192)
-        # При включённой фиксации полосы — ограничиваем SDR hardware-bandwidth (2 МГц),
+        # При включённой фиксации полосы — ограничиваем SDR hardware-bandwidth,
         # чтобы всегда работал _capture_single без медленного sweep
-        _LIVE_BW = 2_000_000   # _USABLE_BW из RtlSdrBackend
+        _LIVE_BW = self._live_bw_hz
         if self.chk_lock_bw.isChecked():
             center = (prev_cfg.start_freq_hz + prev_cfg.stop_freq_hz) / 2
-            prev_cfg.start_freq_hz = max(24e6,    center - _LIVE_BW / 2)
-            prev_cfg.stop_freq_hz  = min(1750e6,  center + _LIVE_BW / 2)
+            prev_cfg.start_freq_hz = max(self._freq_min_hz, center - _LIVE_BW / 2)
+            prev_cfg.stop_freq_hz  = min(self._freq_max_hz, center + _LIVE_BW / 2)
         bw_mhz = (prev_cfg.stop_freq_hz - prev_cfg.start_freq_hz) / 1e6
         self.live_widget.set_follow_mode(bw_mhz)
         self.live_widget.set_span_lock(bw_mhz if self.chk_lock_bw.isChecked() else None)
