@@ -826,7 +826,10 @@ class MainWindow(QMainWindow):
         ]
         return box
 
-    _FREQ_BW_MHZ = 2.0   # аппаратная полоса RTL-SDR
+    @property
+    def _FREQ_BW_MHZ(self) -> float:
+        """Полоса одного захвата текущего бэкенда в МГц (RTL-SDR: 2, HackRF: 10)."""
+        return self._live_bw_hz / 1e6
 
     def _clamp_freq_start(self) -> None:
         start = self.spin_start_freq.value()
