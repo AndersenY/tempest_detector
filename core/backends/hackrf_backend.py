@@ -1,43 +1,134 @@
+import os
+import sys
 import time
 import threading
 import numpy as np
-from ctypes import cast, POINTER, c_byte
-import hackrf as _hackrf
-from hackrf import HackRF, libhackrf
+from ctypes import (CDLL, CFUNCTYPE, Structure, POINTER, cast, pointer,
+                    c_int, c_uint8, c_uint32, c_uint64, c_double,
+                    c_void_p, c_byte, addressof)
 from .base import BaseInstrument
 from ..config import PanoramaConfig
 from ..models import Spectrum
 
 
-class HackRfBackend(BaseInstrument):
-    """HackRF One бэкенд с гарантированно безопасным завершением.
-    
-    Устранены Segmentation fault при закрытии окна/сбросе.
-    Callback полностью защищён от вызова после начала teardown.
-    """
+# ------------------------------------------------------------------
+# Загрузка hackrf.dll (Windows) или libhackrf.so (Linux/macOS)
+# ------------------------------------------------------------------
+def _load_hackrf_lib():
+    if sys.platform == "win32":
+        # Сначала ищем рядом с этим файлом /../lib/hackrf.dll
+        candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "..", "lib", "hackrf-0.dll"),
+            "hackrf.dll",
+        ]
+        for path in candidates:
+            path = os.path.normpath(path)
+            if os.path.isfile(path):
+                # os.add_dll_directory нужен для transitive-зависимостей (libusb-1.0.dll)
+                lib_dir = os.path.dirname(path)
+                if lib_dir:
+                    os.add_dll_directory(lib_dir)
+                return CDLL(path)
+        raise OSError(
+            "hackrf.dll не найден. Положите hackrf.dll и libusb-1.0.dll "
+            "в папку lib/ рядом с проектом."
+        )
+    else:
+        for name in ("libhackrf.so.0", "libhackrf.so"):
+            try:
+                return CDLL(name)
+            except OSError:
+                continue
+        raise OSError(
+            "libhackrf.so не найден. Установите: sudo apt install libhackrf-dev")
 
-    _SAFE_SR         = 20_000_000
-    _USABLE_BW       = 17_000_000
-    _SWEEP_STEP_BW   = 15_000_000
+
+_lib = _load_hackrf_lib()
+
+# ------------------------------------------------------------------
+# Прототипы функций
+# ------------------------------------------------------------------
+_p_dev = c_void_p
+
+_lib.hackrf_init.restype = c_int
+_lib.hackrf_exit.restype = c_int
+_lib.hackrf_open.argtypes = [POINTER(_p_dev)]
+_lib.hackrf_open.restype = c_int
+_lib.hackrf_close.argtypes = [_p_dev]
+_lib.hackrf_close.restype = c_int
+_lib.hackrf_set_freq.argtypes = [_p_dev, c_uint64]
+_lib.hackrf_set_freq.restype = c_int
+_lib.hackrf_set_sample_rate.argtypes = [_p_dev, c_double]
+_lib.hackrf_set_sample_rate.restype = c_int
+_lib.hackrf_set_amp_enable.argtypes = [_p_dev, c_uint8]
+_lib.hackrf_set_amp_enable.restype = c_int
+_lib.hackrf_set_lna_gain.argtypes = [_p_dev, c_uint32]
+_lib.hackrf_set_lna_gain.restype = c_int
+_lib.hackrf_set_vga_gain.argtypes = [_p_dev, c_uint32]
+_lib.hackrf_set_vga_gain.restype = c_int
+_lib.hackrf_is_streaming.argtypes = [_p_dev]
+_lib.hackrf_is_streaming.restype = c_int
+
+
+class _HackRFTransfer(Structure):
+    _fields_ = [
+        ("device",        c_void_p),
+        ("buffer",        POINTER(c_byte)),
+        ("buffer_length", c_int),
+        ("valid_length",  c_int),
+        ("rx_ctx",        c_void_p),
+        ("tx_ctx",        c_void_p),
+    ]
+
+
+_rx_cb_t = CFUNCTYPE(c_int, POINTER(_HackRFTransfer))
+
+_lib.hackrf_start_rx.argtypes = [_p_dev, _rx_cb_t, c_void_p]
+_lib.hackrf_start_rx.restype = c_int
+_lib.hackrf_stop_rx.argtypes = [_p_dev]
+_lib.hackrf_stop_rx.restype = c_int
+
+HACKRF_SUCCESS = 0
+HACKRF_ERROR_BUSY = -6
+
+
+# ------------------------------------------------------------------
+# Бэкенд
+# ------------------------------------------------------------------
+class HackRfBackend(BaseInstrument):
+    """HackRF One бэкенд — кросс-платформенный (Windows/Linux) через ctypes."""
+
+    _SAFE_SR = 20_000_000
+    _USABLE_BW = 17_000_000
+    _SWEEP_STEP_BW = 15_000_000
     _DEFAULT_LNA_GAIN = 24
 
-    _COLLECT_TIMEOUT_S   = 3.0
+    _COLLECT_TIMEOUT_S = 3.0
     _COLLECT_MAX_RETRIES = 2
-    _PLL_SETTLE_MS       = 8
+    _PLL_SETTLE_MS = 8
 
     def __init__(self, device_index: int = 0):
-        self._device: HackRF | None = None
+        self._dev_p = _p_dev(None)   # указатель на устройство
         self._device_index = device_index
         self._cfg: PanoramaConfig | None = None
 
-        self._rx_lock    = threading.Lock()
-        self._rx_buffer  = bytearray()
-        self._rx_needed  = 0
-        self._rx_done    = threading.Event()
-        self._rx_abort   = threading.Event()
-        self._c_rx_cb    = None
-        self._streaming  = False
-        self._closing    = False  # Флаг мгновенной блокировки callback'ов
+        # Параметры, выставляемые через configure()
+        self._sample_rate = self._SAFE_SR
+        self._center_freq = 100_000_000
+        self._lna_gain = self._DEFAULT_LNA_GAIN
+        self._vga_gain = 16
+        self._amp_enabled = False
+
+        self._rx_lock = threading.Lock()
+        self._rx_buffer = bytearray()
+        self._rx_needed = 0
+        self._rx_done = threading.Event()
+        self._rx_abort = threading.Event()
+        self._c_rx_cb = None
+        self._streaming = False
+        self._closing = False
+        self._initialized = False
 
     # ------------------------------------------------------------------
     # BaseInstrument interface
@@ -48,47 +139,57 @@ class HackRfBackend(BaseInstrument):
 
     @property
     def is_connected(self) -> bool:
-        return self._device is not None
+        return self._dev_p.value is not None
 
     def connect(self) -> None:
-        try:
-            if self._device:
-                self.close()
-            self._device = HackRF(device_index=self._device_index)
-            self._closing = False
-            print("✅ HackRF One подключён")
-        except Exception as e:
-            raise RuntimeError(f"Не удалось подключить HackRF One: {e}")
+        if self.is_connected:
+            self.close()
+        if not self._initialized:
+            if _lib.hackrf_init() != HACKRF_SUCCESS:
+                raise RuntimeError("hackrf_init() завершился с ошибкой")
+            self._initialized = True
+        res = _lib.hackrf_open(pointer(self._dev_p))
+        if res != HACKRF_SUCCESS:
+            raise RuntimeError(
+                f"hackrf_open() завершился с ошибкой: код {res}")
+        self._closing = False
+        print("✅ HackRF One подключён")
 
     def close(self) -> None:
-        """Безопасное завершение. Вызывается только из main_thread (closeEvent)."""
-        if self._device is None:
+        if not self.is_connected:
             return
         print("🔌 HackRF: завершение сессии...")
         self._stop_streaming(wait=True)
         try:
-            self._device.close()
-            print("✅ HackRF: сессия завершена, диод RX погашен.")
+            _lib.hackrf_close(self._dev_p)
+            print("✅ HackRF: сессия завершена.")
         except Exception as e:
             print(f"⚠️ Ошибка закрытия HackRF: {e}")
         finally:
-            self._device = None
+            self._dev_p = _p_dev(None)
             self._streaming = False
             self._closing = True
             self._rx_done.clear()
             self._rx_abort.clear()
+        if self._initialized:
+            try:
+                _lib.hackrf_exit()
+            except Exception:
+                pass
+            self._initialized = False
 
     # ------------------------------------------------------------------
-    # RX Callback & Streaming
+    # Внутренние методы: streaming & callback
     # ------------------------------------------------------------------
     def _rx_callback(self, transfer_ptr) -> int:
-        """Вызывается из потока libhackrf. Мгновенно выходит при _closing."""
         if self._closing or self._rx_abort.is_set() or self._rx_done.is_set():
             return 0
         try:
-            c = transfer_ptr.contents
-            n = c.buffer_length
-            values = cast(c.buffer, POINTER(c_byte * n)).contents
+            t = transfer_ptr.contents
+            n = t.valid_length
+            if n <= 0:
+                return 0
+            values = cast(t.buffer, POINTER(c_byte * n)).contents
             with self._rx_lock:
                 needed = self._rx_needed - len(self._rx_buffer)
                 if needed > 0:
@@ -96,58 +197,58 @@ class HackRfBackend(BaseInstrument):
                     self._rx_buffer.extend(bytearray(values)[:take])
                     if len(self._rx_buffer) >= self._rx_needed:
                         self._rx_done.set()
-            return 0
         except Exception:
-            return 0
+            pass
+        return 0
 
     def _start_streaming(self) -> None:
-        if self._device is None or self._closing:
+        if not self.is_connected or self._closing:
             return
-        hw = libhackrf.hackrf_is_streaming(self._device.dev_p)
-        if hw == 1 and self._streaming:
+        if _lib.hackrf_is_streaming(self._dev_p) == 1 and self._streaming:
             return
-
         self._streaming = False
         if self._c_rx_cb is None:
-            self._c_rx_cb = _hackrf._callback(self._rx_callback)
-
-        res = libhackrf.hackrf_start_rx(self._device.dev_p, self._c_rx_cb, None)
-        if res == -6:  # HACKRF_ERROR_BUSY
+            self._c_rx_cb = _rx_cb_t(self._rx_callback)
+        res = _lib.hackrf_start_rx(self._dev_p, self._c_rx_cb, None)
+        if res == HACKRF_ERROR_BUSY:
             time.sleep(0.05)
-            res = libhackrf.hackrf_start_rx(self._device.dev_p, self._c_rx_cb, None)
-        if res != 0:
+            res = _lib.hackrf_start_rx(self._dev_p, self._c_rx_cb, None)
+        if res != HACKRF_SUCCESS:
             raise RuntimeError(f"hackrf_start_rx failed: код {res}")
         self._streaming = True
 
     def _stop_streaming(self, wait: bool = True) -> None:
-        if not self._streaming or self._device is None:
+        if not self._streaming or not self.is_connected:
             return
-        # Сначала блокируем callback через флаг — он вернёт 0, но ctypes-объект
-        # остаётся живым, пока libhackrf не подтвердит остановку.
         self._closing = True
         self._rx_abort.set()
-
         try:
-            libhackrf.hackrf_stop_rx(self._device.dev_p)
+            _lib.hackrf_stop_rx(self._dev_p)
         except Exception:
             pass
-
         if wait:
             deadline = time.perf_counter() + 1.0
             while time.perf_counter() < deadline:
                 try:
-                    if libhackrf.hackrf_is_streaming(self._device.dev_p) != 1:
+                    if _lib.hackrf_is_streaming(self._dev_p) != 1:
                         break
                 except Exception:
                     break
                 time.sleep(0.02)
-
-        # Только здесь железо гарантированно не вызовет callback → безопасно обнулять
         self._c_rx_cb = None
         self._streaming = False
         self._rx_abort.clear()
         self._rx_done.clear()
         self._closing = False
+
+    def _apply_hw_settings(self) -> None:
+        """Отправить текущие параметры на устройство."""
+        _lib.hackrf_set_sample_rate(self._dev_p, float(self._sample_rate))
+        _lib.hackrf_set_freq(self._dev_p, int(self._center_freq))
+        _lib.hackrf_set_lna_gain(self._dev_p, int(self._lna_gain))
+        _lib.hackrf_set_vga_gain(self._dev_p, int(self._vga_gain))
+        _lib.hackrf_set_amp_enable(
+            self._dev_p, c_uint8(1 if self._amp_enabled else 0))
 
     def _collect_samples(self, num_samples: int) -> np.ndarray:
         num_bytes = num_samples * 2
@@ -156,10 +257,10 @@ class HackRfBackend(BaseInstrument):
             self._rx_needed = num_bytes
         self._rx_done.clear()
         self._rx_abort.clear()
-        self._closing = False  # Разрешаем callback только на время сбора
+        self._closing = False
 
         self._start_streaming()
-        if libhackrf.hackrf_is_streaming(self._device.dev_p) != 1:
+        if _lib.hackrf_is_streaming(self._dev_p) != 1:
             self._streaming = False
             self._start_streaming()
 
@@ -175,24 +276,26 @@ class HackRfBackend(BaseInstrument):
 
         with self._rx_lock:
             data = bytes(self._rx_buffer[:num_bytes])
-        return np.frombuffer(data, dtype=np.int8).astype(np.float64).view(np.complex128) / 127.5
+        raw = np.frombuffer(data, dtype=np.int8).astype(np.float64)
+        return (raw[0::2] + 1j * raw[1::2]) / 127.5
 
     # ------------------------------------------------------------------
     # Конфигурация и захват
     # ------------------------------------------------------------------
+    @staticmethod
+    def _snap_vga(g): return int(np.clip(round(g / 2) * 2, 0, 62))
+    @staticmethod
+    def _snap_lna(g): return int(np.clip(round(g / 8) * 8, 0, 40))
+
     def _use_single(self, cfg: PanoramaConfig) -> bool:
         fast = cfg.averaging_count <= 1 and not cfg.use_max_hold
         span = cfg.stop_freq_hz - cfg.start_freq_hz
         threshold = self._USABLE_BW if fast else self._SWEEP_STEP_BW
         return span <= threshold
 
-    @staticmethod
-    def _snap_vga(g): return int(np.clip(round(g / 2) * 2, 0, 62))
-    @staticmethod
-    def _snap_lna(g): return int(np.clip(round(g / 8) * 8, 0, 40))
-
     def configure(self, cfg: PanoramaConfig) -> None:
-        if not self._device: raise RuntimeError("HackRF не подключён.")
+        if not self.is_connected:
+            raise RuntimeError("HackRF не подключён.")
         self._stop_streaming()
         self._cfg = cfg
         span = cfg.stop_freq_hz - cfg.start_freq_hz
@@ -205,50 +308,75 @@ class HackRfBackend(BaseInstrument):
             sr = self._SAFE_SR
             center = int(cfg.start_freq_hz + self._SWEEP_STEP_BW / 2)
 
-        self._device.sample_rate = sr
-        self._device.center_freq = center
-        self._device.lna_gain    = self._snap_lna(self._DEFAULT_LNA_GAIN)
-        self._device.vga_gain    = self._snap_vga(cfg.sdr_gain_db)
-        self._device.enable_amp() if cfg.sdr_gain_db > 50 else self._device.disable_amp()
+        self._sample_rate = sr
+        self._center_freq = center
+        self._lna_gain = self._snap_lna(self._DEFAULT_LNA_GAIN)
+        self._vga_gain = self._snap_vga(cfg.sdr_gain_db)
+        self._amp_enabled = cfg.sdr_gain_db > 50
+
+        self._apply_hw_settings()
         self._start_streaming()
 
-    _SWEEP_SETTLE_S = 0.010; _SWEEP_SETTLE_FAST_S = 0.010
-    # Settle между усреднениями одной частоты = 0: стриминг непрерывен,
-    # перенастройки нет, задержка только увеличивает окно усреднения без пользы.
-    _CAPTURE_SETTLE_S = 0.0; _CAPTURE_SETTLE_FAST_S = 0.0
+    _SWEEP_SETTLE_S = 0.010
+    _SWEEP_SETTLE_FAST_S = 0.010
+    _CAPTURE_SETTLE_S = 0.0
+    _CAPTURE_SETTLE_FAST_S = 0.0
 
     def capture_spectrum(self) -> Spectrum:
-        if not self._device or not self._cfg: raise RuntimeError("HackRF не настроен")
+        if not self.is_connected or not self._cfg:
+            raise RuntimeError("HackRF не настроен")
         cfg = self._cfg
         fast = cfg.averaging_count <= 1 and not cfg.use_max_hold
-        return self._capture_single(cfg.start_freq_hz, cfg.stop_freq_hz, cfg, fast) if self._use_single(cfg) else self._capture_sweep(cfg, fast)
+        if self._use_single(cfg):
+            return self._capture_single(cfg.start_freq_hz, cfg.stop_freq_hz, cfg, fast)
+        return self._capture_sweep(cfg, fast)
 
     def _capture_single(self, start_hz, stop_hz, cfg, fast=False):
         settle = self._CAPTURE_SETTLE_FAST_S if fast else self._CAPTURE_SETTLE_S
         win = np.hanning(cfg.fft_size)
-        avg, mx, cnt = np.zeros(cfg.fft_size, dtype=np.float64), np.full(cfg.fft_size, -np.inf, dtype=np.float64), 0
+        avg = np.zeros(cfg.fft_size, dtype=np.float64)
+        mx = np.full(cfg.fft_size, -np.inf, dtype=np.float64)
+        cnt = 0
         for _ in range(cfg.averaging_count):
             time.sleep(settle)
             raw = self._collect_samples(cfg.fft_size)
-            if len(raw) < cfg.fft_size: break
+            if len(raw) < cfg.fft_size:
+                break
             raw -= raw.mean()
-            p = np.abs(np.fft.fftshift(np.fft.fft(raw * win)))**2
-            avg += p; np.maximum(mx, p, out=mx); cnt += 1
-        if cnt == 0: raise RuntimeError("HackRF: нет данных")
-        db = 10*np.log10((mx if cfg.use_max_hold else avg/cnt)+1e-12)+cfg.calibration_offset_db
-        sr = self._device.sample_rate
-        f = np.fft.fftshift(np.fft.fftfreq(cfg.fft_size, d=1.0/sr))+self._device.center_freq
-        m = (f>=start_hz)&(f<=stop_hz)
-        return Spectrum(f[m], db[m], sr/cfg.fft_size, time.time())
+            p = np.abs(np.fft.fftshift(np.fft.fft(raw * win))) ** 2
+            avg += p
+            np.maximum(mx, p, out=mx)
+            cnt += 1
+        if cnt == 0:
+            raise RuntimeError("HackRF: нет данных")
+        power = mx if cfg.use_max_hold else avg / cnt
+        db = 10 * np.log10(power + 1e-12) + cfg.calibration_offset_db
+        freqs = (np.fft.fftshift(np.fft.fftfreq(cfg.fft_size, d=1.0 / self._sample_rate))
+                 + self._center_freq)
+        mask = (freqs >= start_hz) & (freqs <= stop_hz)
+        return Spectrum(freqs[mask], db[mask], self._sample_rate / cfg.fft_size, time.time())
 
     def _capture_sweep(self, cfg, fast=False):
-        step = self._SWEEP_STEP_BW; settle = self._PLL_SETTLE_MS/1000.0
-        centers, c = [], cfg.start_freq_hz+step/2
-        while c-step/2 < cfg.stop_freq_hz: centers.append(c); c += step
-        af, ad = [], []
+        step = self._SWEEP_STEP_BW
+        settle = self._PLL_SETTLE_MS / 1000.0
+        centers = []
+        c = cfg.start_freq_hz + step / 2
+        while c - step / 2 < cfg.stop_freq_hz:
+            centers.append(c)
+            c += step
+
+        all_f, all_d = [], []
         for center in centers:
-            self._device.center_freq = int(center); time.sleep(settle)
-            s, e = max(center-step/2, cfg.start_freq_hz), min(center+step/2, cfg.stop_freq_hz)
-            ch = self._capture_single(s, e, cfg, fast); af.append(ch.frequencies_hz); ad.append(ch.amplitudes_db)
-        fa, da = np.concatenate(af), np.concatenate(ad)
-        return Spectrum(fa[np.argsort(fa)], da[np.argsort(fa)], self._SAFE_SR/cfg.fft_size, time.time())
+            self._center_freq = int(center)
+            _lib.hackrf_set_freq(self._dev_p, int(center))
+            time.sleep(settle)
+            s = max(center - step / 2, cfg.start_freq_hz)
+            e = min(center + step / 2, cfg.stop_freq_hz)
+            ch = self._capture_single(s, e, cfg, fast)
+            all_f.append(ch.frequencies_hz)
+            all_d.append(ch.amplitudes_db)
+
+        fa = np.concatenate(all_f)
+        da = np.concatenate(all_d)
+        order = np.argsort(fa)
+        return Spectrum(fa[order], da[order], self._SAFE_SR / cfg.fft_size, time.time())
