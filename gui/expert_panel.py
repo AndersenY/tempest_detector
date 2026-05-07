@@ -66,6 +66,7 @@ class ExpertPanel(QGroupBox):
     signal_modified   = pyqtSignal(int)    # индекс изменённого сигнала
     zero_span_started = pyqtSignal(float)  # freq_hz — запрос на старт Zero Span
     zero_span_stopped = pyqtSignal()       # запрос на остановку Zero Span
+    delete_requested  = pyqtSignal()       # удалить выбранный сигнал (экспертный режим)
 
     def __init__(self, parent=None) -> None:
         super().__init__("Экспертный анализ", parent)
@@ -76,6 +77,8 @@ class ExpertPanel(QGroupBox):
         self._signal_idx: int = -1
         self._ctrl: BaseInstrument | None = None
         self._worker: _RemeasureWorker | None = None
+        self._expert_mode: bool = False
+        self._threshold_db: float | None = None
 
         self._init_ui()
         self._update_display()
@@ -153,6 +156,19 @@ class ExpertPanel(QGroupBox):
         if not self._btn_zero_span.isChecked():
             self._btn_zero_span.setEnabled(enabled and has)
 
+    def enable_expert_mode(self, active: bool) -> None:
+        """Включить/выключить экспертный режим (после завершения всех измерений)."""
+        self._expert_mode = active
+        self._btn_delete.setVisible(active)
+        self._btn_delete.setEnabled(active and self._signal is not None)
+        if not active:
+            self._lbl_hint.setText("")
+
+    def set_threshold(self, db: float) -> None:
+        """Задать порог обнаружения для отображения подсказки в экспертном режиме."""
+        self._threshold_db = db
+        self._update_display()
+
     def set_zero_span_active(self, active: bool) -> None:
         """Синхронизировать состояние кнопки с внешним управлением (MainWindow)."""
         self._btn_zero_span.setChecked(active)
@@ -181,6 +197,11 @@ class ExpertPanel(QGroupBox):
         root.addWidget(self._lbl_freq)
         root.addWidget(self._lbl_levels)
         root.addWidget(self._lbl_status)
+
+        self._lbl_hint = QLabel("")
+        self._lbl_hint.setWordWrap(True)
+        self._lbl_hint.setStyleSheet("font-style: italic; font-size: 11px;")
+        root.addWidget(self._lbl_hint)
 
         # ── Прогресс переизмерения ────────────────────────────────────
         self._progress = QProgressBar()
@@ -231,6 +252,19 @@ class ExpertPanel(QGroupBox):
         self._btn_zero_span.clicked.connect(self._toggle_zero_span)
         root.addWidget(self._btn_zero_span)
 
+        # ── Удаление сигнала (экспертный режим) ──────────────────────
+        self._btn_delete = QPushButton("Удалить сигнал из таблицы")
+        self._btn_delete.setStyleSheet(
+            "QPushButton { background-color: #7b1a1a; color: white; border: none;"
+            " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
+            " QPushButton:hover { background-color: #9b2a2a; }"
+            " QPushButton:disabled { background-color: #3a2020; color: #666; }"
+        )
+        self._btn_delete.setToolTip("Удалить выбранный сигнал из таблицы и графика")
+        self._btn_delete.clicked.connect(self.delete_requested)
+        self._btn_delete.setVisible(False)
+        root.addWidget(self._btn_delete)
+
     # ------------------------------------------------------------------
     # Обновление отображения
     # ------------------------------------------------------------------
@@ -264,10 +298,29 @@ class ExpertPanel(QGroupBox):
             self._lbl_status.setText(
                 f"<span style='color:{color_str}'>{label_str}</span>"
             )
+
+        # Подсказка «Вероятнее всего» — только в экспертном режиме с заданным порогом
+        if has and self._expert_mode and self._threshold_db is not None:
+            t = self._theme
+            delta = sig.amplitude_diff_db
+            if delta >= self._threshold_db:
+                hint_label = "Вероятнее всего: ПЭМИН"
+                hint_color = t["tbl_status_ok"]
+            else:
+                hint_label = "Вероятнее всего: Брак (ниже порога)"
+                hint_color = t["tbl_status_fail"]
+            self._lbl_hint.setText(
+                f"<span style='color:{hint_color}'>{hint_label}</span>"
+            )
+        else:
+            self._lbl_hint.setText("")
+
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
             btn.setEnabled(has and ctrl_ok)
         if not self._btn_zero_span.isChecked():
             self._btn_zero_span.setEnabled(has and ctrl_ok)
+        if self._expert_mode:
+            self._btn_delete.setEnabled(has)
 
     # ------------------------------------------------------------------
     # Переизмерение

@@ -338,16 +338,25 @@ class SpectrumPlotWidget(QWidget):
                     pg.mkPen(t[_tag_to_key[tag]], width=1.5, style=Qt.PenStyle.DashLine)
                 )
 
-        # Обновить существующую highlight-линию
+        # Пересоздаём highlight-линию — патчить label.fill без пересоздания ненадёжно
         if self._highlight_line is not None:
-            self._highlight_line.setPen(
-                pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine)
+            pos     = self._highlight_line.value()
+            visible = self._highlight_line.isVisible()
+            self.plot.getPlotItem().removeItem(self._highlight_line)
+            self._highlight_line = pg.InfiniteLine(
+                angle=90, movable=False,
+                pen=pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine),
+                label="{value:.3f} МГц",
+                labelOpts={
+                    "color": t["marker_label_fg"],
+                    "position": 0.95,
+                    "fill": pg.mkBrush(*t["marker_label_fill"]),
+                },
             )
-            try:
-                self._highlight_line.label.setColor(pg.mkColor(t["marker_label_fg"]))
-                self._highlight_line.label.fill = pg.mkBrush(*t["marker_label_fill"])
-            except Exception:
-                pass
+            self._highlight_line.setZValue(100)
+            self._highlight_line.setPos(pos)
+            self._highlight_line.setVisible(visible)
+            self.plot.getPlotItem().addItem(self._highlight_line)
 
     def _on_marker_toggle(self, checked: bool):
         self.markers_visible = checked
@@ -606,16 +615,14 @@ class SpectrumPlotWidget(QWidget):
 def _marker_color(sig):
     """
     Возвращает тег ('bookmark' | 'pending' | 'confirmed') или None.
-    None означает — сигнал отбракован, маркер не рисуем.
+    None означает — маркер не рисуем.
+    Использует status_color, чтобы смена статуса оператором сразу отражалась на графике.
     """
+    sc = getattr(sig, 'status_color', 'yellow')
+    if sc == 'green':
+        return 'confirmed'
+    if sc in ('red', 'blue'):
+        return None             # брак / внешний — маркер не отображаем
+    # yellow / всё остальное
     is_bookmark = getattr(sig, 'detection_method', '') == 'bookmark'
-    v1 = sig.verified_1
-    v2 = sig.verified_2
-
-    if v1 is None or (v1 and v2 is None):
-        return "bookmark" if is_bookmark else "pending"
-
-    if v1 and v2:
-        return "confirmed"
-
-    return None                 # В1 или В2 провалена — не рисуем
+    return "bookmark" if is_bookmark else "pending"

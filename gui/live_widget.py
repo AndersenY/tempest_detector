@@ -167,9 +167,10 @@ class LiveWidget(QWidget):
         self.btn_auto_scale.setToolTip("Сбросить масштаб")
         self.btn_auto_scale.clicked.connect(self.reset_view)
 
-        self.btn_peak = QPushButton("Удержание пика")
+        self.btn_peak = QPushButton("Пик")
         self.btn_peak.setCheckable(True)
         self.btn_peak.setChecked(True)
+        self.btn_peak.setToolTip("Удержание пика (показывать максимальный уровень)")
         self.btn_peak.setStyleSheet(btn_toggle(t))
         self.btn_peak.toggled.connect(self._on_peak_toggle)
 
@@ -291,29 +292,43 @@ class LiveWidget(QWidget):
             pg.mkPen(t["curve_peak"], width=0.8, style=Qt.PenStyle.DashLine)
         )
 
-        # Существующие метки
-        for line, f in zip(self._marked_lines, self.marked_freqs_mhz):
-            is_sel = (self._last_highlight_mhz is not None
-                      and abs(f - self._last_highlight_mhz) < self._HIGHLIGHT_MATCH_MHZ)
-            color = t["marker_sel"] if is_sel else t["marker_unsel"]
-            width = 2.5             if is_sel else 1.5
-            line.setPen(pg.mkPen(color, width=width, style=Qt.PenStyle.DashLine))
-            try:
-                line.label.setColor(pg.mkColor(t["marker_label_fg"]))
-                line.label.fill = pg.mkBrush(*t["marker_label_fill"])
-            except Exception:
-                pass
+        # Пересоздаём метки с новой темой — попытка патчить label.fill
+        # без пересоздания ненадёжна (pyqtgraph не перерисовывает фон подписи).
+        if self._marked_lines:
+            freqs = list(self.marked_freqs_mhz)
+            pi = self._pw.getPlotItem()
+            for line in self._marked_lines:
+                pi.removeItem(line)
+            self._marked_lines.clear()
+            self.marked_freqs_mhz.clear()
+            for f in freqs:
+                is_sel = (self._last_highlight_mhz is not None
+                          and abs(f - self._last_highlight_mhz) < self._HIGHLIGHT_MATCH_MHZ)
+                line = self._make_mark_line(f, highlighted=is_sel)
+                line.setPos(f)
+                line.setVisible(self._marks_visible)
+                pi.addItem(line)
+                self._marked_lines.append(line)
+                self.marked_freqs_mhz.append(f)
 
         # Существующая highlight-линия
         if self._highlight_line is not None:
-            self._highlight_line.setPen(
-                pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine)
+            pos = self._highlight_line.value()
+            pi2 = self._pw.getPlotItem()
+            pi2.removeItem(self._highlight_line)
+            self._highlight_line = pg.InfiniteLine(
+                angle=90, movable=False,
+                pen=pg.mkPen(t["marker_sel"], width=1.5, style=Qt.PenStyle.DashLine),
+                label="{value:.3f} МГц",
+                labelOpts={
+                    "color": t["marker_label_fg"],
+                    "position": self._LABEL_HL_POS,
+                    "fill": pg.mkBrush(*t["marker_label_fill"]),
+                },
             )
-            try:
-                self._highlight_line.label.setColor(pg.mkColor(t["marker_label_fg"]))
-                self._highlight_line.label.fill = pg.mkBrush(*t["marker_label_fill"])
-            except Exception:
-                pass
+            self._highlight_line.setZValue(100)
+            self._highlight_line.setPos(pos)
+            pi2.addItem(self._highlight_line)
 
         self._pw.setBackground(t["bg_plot"])
         pi = self._pw.getPlotItem()

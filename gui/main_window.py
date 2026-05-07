@@ -256,6 +256,20 @@ class MainWindow(QMainWindow):
         mode_group.addAction(self.act_mode_demo)
         menu_mode.addAction(self.act_mode_demo)
 
+        menu_mode.addSeparator()
+        # Не входит в эксклюзивную группу — работает совместно с любым методом
+        self.act_expert_mode = QAction("Экспертный режим", self)
+        self.act_expert_mode.setCheckable(True)
+        self.act_expert_mode.setToolTip(
+            "После завершения измерений открывает расширенный режим:\n"
+            "редактирование таблицы, удаление и добавление сигналов,\n"
+            "подсказки по классификации, экспорт CSV."
+        )
+        menu_mode.addAction(self.act_expert_mode)
+        # expert_panel создан в _init_ui() (раньше _setup_menu_bar), подключаем здесь
+        self.expert_panel.setVisible(self.act_expert_mode.isChecked())
+        self.act_expert_mode.toggled.connect(self._on_expert_mode_toggled)
+
         # ── Действие ──────────────────────────────────────────────────
         menu_action = mb.addMenu("Действие")
 
@@ -619,10 +633,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setColumnHidden(4, True)   # «Гармоники» — скрыта до активации метода
         self.table.setAlternatingRowColors(True)
-        self.table.setEditTriggers(
-            QTableWidget.EditTrigger.DoubleClicked |
-            QTableWidget.EditTrigger.EditKeyPressed
-        )
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._status_delegate = _StatusDelegate(self.table)
         self.table.setItemDelegateForColumn(5, self._status_delegate)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
@@ -663,6 +674,7 @@ class MainWindow(QMainWindow):
         self.expert_panel.signal_modified.connect(self._on_expert_signal_modified)
         self.expert_panel.zero_span_started.connect(self._on_zero_span_start)
         self.expert_panel.zero_span_stopped.connect(self._on_zero_span_stop)
+        self.expert_panel.delete_requested.connect(self._on_expert_delete_requested)
         control_layout.addWidget(self.expert_panel)
 
         # ── Панель удалённого управления ──────────────────────────────
@@ -1102,7 +1114,7 @@ class MainWindow(QMainWindow):
         self._update_hw_limits()
 
     def _on_control_button_clicked(self):
-        if self.current_step == "idle":
+        if self.current_step in ("idle", "expert"):
             if self.scan_mode == "demo":
                 self._load_measurement()
             else:
@@ -1312,12 +1324,14 @@ class MainWindow(QMainWindow):
         self._panorama_preview_worker.update_config(cfg)
 
     def _on_table_context_menu(self, pos) -> None:
-        """Правый клик по строке — удалить метку (доступно в preview, idle и ЭТАП 1)."""
+        """Правый клик по строке: удалить сигнал (expert) или метку (preview/idle/фаза1)."""
+        is_expert = (self.current_step == "expert")
         phase1_waiting = (
             self.current_step == "waiting" and
             "ФОН ИЗМЕРЕН" in self._current_action_title
         )
-        if self.current_step not in ("live_preview", "idle") and not phase1_waiting:
+        if (self.current_step not in ("live_preview", "idle")
+                and not phase1_waiting and not is_expert):
             return
         row = self.table.rowAt(pos.y())
         if row < 0:
@@ -1330,7 +1344,16 @@ class MainWindow(QMainWindow):
         except ValueError:
             return
 
-        # Проверяем, что строка — метка (до или после измерения)
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+
+        if is_expert:
+            act_del = menu.addAction("Удалить сигнал")
+            if menu.exec(self.table.viewport().mapToGlobal(pos)) == act_del:
+                self._delete_signal(row)
+            return
+
+        # Не экспертный режим — удаляем только метки (закладки)
         is_bookmark = any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz)
         if not is_bookmark and self.wf and hasattr(self.wf, "signals"):
             signals = self.wf.signals
@@ -1338,9 +1361,6 @@ class MainWindow(QMainWindow):
                 is_bookmark = (signals[row].detection_method == "bookmark")
         if not is_bookmark:
             return
-
-        from PyQt6.QtWidgets import QMenu
-        menu = QMenu(self)
         act_del = menu.addAction("Удалить метку")
         if menu.exec(self.table.viewport().mapToGlobal(pos)) == act_del:
             self._delete_bookmark(freq_hz)
@@ -1350,6 +1370,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self.current_step != "expert":
+            return
         row = item.row()
         col = item.column()
         text = item.text().strip()
@@ -1376,6 +1398,9 @@ class MainWindow(QMainWindow):
                 item.setForeground(QColor(color_hex))
                 self.table.blockSignals(False)
                 s.status_color = _StatusDelegate.key_for(text)
+                # Перерисовываем маркеры на графике с новым цветом
+                if self.wf and hasattr(self.wf, "signals"):
+                    self.plot.plot_signals(self.wf.signals)
         except (ValueError, TypeError):
             pass
 
@@ -1432,6 +1457,7 @@ class MainWindow(QMainWindow):
         self.live_widget.clear()
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.enable_remeasure(False)
+        self.expert_panel.enable_expert_mode(False)
 
         from copy import copy as _cp
         prev_cfg = _cp(self.cfg)
@@ -1544,6 +1570,7 @@ class MainWindow(QMainWindow):
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.set_instrument(self.ctrl)
         self.expert_panel.enable_remeasure(False)
+        self.expert_panel.enable_expert_mode(False)
 
         self.plot.clear()
         # Показываем метки в таблице пока идёт фаза 1 (до обнаружения сигналов)
@@ -1625,13 +1652,12 @@ class MainWindow(QMainWindow):
             self.plot.clear_highlight()
             self.expert_panel.clear_signal()
             return
-        try:
-            freq_hz = float(freq_item.text()) * 1e6
-        except ValueError:
+        # Таблица строится в том же порядке, что и signals — row == index в списке
+        idx = row
+        if not (0 <= idx < len(signals)):
             self.plot.clear_highlight()
             self.expert_panel.clear_signal()
             return
-        idx = min(range(len(signals)), key=lambda i: abs(signals[i].frequency_hz - freq_hz))
         sig = signals[idx]
         if _marker_color(sig) is not None:
             freq_mhz = sig.frequency_hz / 1e6
@@ -1684,7 +1710,7 @@ class MainWindow(QMainWindow):
         self._stop_zero_span()
         self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.set_zero_span_active(False)
-        if self.current_step == "idle":
+        if self.current_step in ("idle", "expert"):
             self.expert_panel.enable_remeasure(True)
 
     def _on_zero_span_error(self, msg: str) -> None:
@@ -1711,12 +1737,23 @@ class MainWindow(QMainWindow):
 
     def _on_expert_signal_modified(self, idx: int) -> None:
         signals = self.wf.signals if self.wf and hasattr(self.wf, "signals") else []
-        if signals:
-            self._update_table_from_signals(signals)
-            self.plot.plot_signals(signals)
-            if 0 <= idx < len(signals):
-                sig = signals[idx]
-                self.plot.set_highlight(sig.frequency_hz / 1e6)
+        if not signals:
+            return
+        if 0 <= idx < len(signals):
+            sig = signals[idx]
+            # Для ручных сигналов — пересчитать статус на основе порога
+            # (автоматически, чтобы оператор видел подсказку после переизмерения)
+            if sig.detection_method == "manual" and sig.amplitude_on_db != 0.0:
+                if sig.amplitude_diff_db >= self.cfg.threshold_db:
+                    sig.status_color = "yellow"   # выше порога — требует проверки
+                else:
+                    sig.status_color = "red"      # ниже порога — не подтверждён
+            self.plot.set_highlight(sig.frequency_hz / 1e6)
+        self._update_table_from_signals(signals)
+        self.plot.plot_signals(signals)
+        # Восстановить выделение строки — rebuild таблицы сбрасывает selection
+        if 0 <= idx < self.table.rowCount():
+            self.table.selectRow(idx)
 
     def _on_graph_click(self, freq_mhz: float):
         if not self.wf or not hasattr(self.wf, "signals") or not self.wf.signals:
@@ -1943,9 +1980,8 @@ class MainWindow(QMainWindow):
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(True)
 
-        if "ЗАВЕРШЕНА" in title or "ЗАВЕРШЕНО" in title:
-            self.act_save.setEnabled(True)
-            self.act_export_spectrum.setEnabled(self._last_on is not None)
+        # CSV/NPZ включаются только в экспертном режиме (_enter_expert_mode)
+
 
         self.btn_action.setStyleSheet(
             f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
@@ -1982,6 +2018,7 @@ class MainWindow(QMainWindow):
         self.plot.btn_mark_mode.setVisible(True)
         self.plot.btn_clear_marks.setVisible(True)
         self.table.setRowCount(0)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._reset_progress()
         self._stop_zero_span()
         self.live_widget.clear()
@@ -1990,6 +2027,8 @@ class MainWindow(QMainWindow):
         self.expert_panel.clear_signal()
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.enable_remeasure(False)
+        self.expert_panel.enable_expert_mode(False)
+        self.expert_panel.setVisible(self.act_expert_mode.isChecked())
 
         self.lbl_instruction.setText("Подключите SDR для начала работы.")
         t = self._theme
@@ -2033,8 +2072,12 @@ class MainWindow(QMainWindow):
         self._refresh_bookmark_table()
 
     def _on_panorama_freq_marked(self, freq_mhz: float) -> None:
-        """Пользователь поставил метку на панораме — сохраняем как закладку."""
+        """Пользователь поставил метку на панораме."""
         freq_hz = freq_mhz * 1e6
+        if self.current_step == "expert":
+            # Экспертный режим: метка создаёт новый сигнал для проверки
+            self._add_expert_signal(freq_hz)
+            return
         if not any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
             self._bookmark_freqs_hz.append(freq_hz)
             if self.wf is not None and hasattr(self.wf, "update_bookmark_candidates"):
@@ -2072,7 +2115,6 @@ class MainWindow(QMainWindow):
     def _on_thread_finished(self):
         # Вызывается только при нормальном завершении (при сбросе — отключается в _do_ui_reset)
         self.btn_stop.setEnabled(True)
-        self.current_step = "idle"
         self._set_settings_enabled(True)
         self.btn_action.setText("НОВЫЙ ПОИСК")
         t = self._theme
@@ -2084,9 +2126,130 @@ class MainWindow(QMainWindow):
             f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
             f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
         )
-        self.expert_panel.enable_remeasure(True)
-        # Сбрасываем прогрессбар — готово к новому поиску
+        if self.act_expert_mode.isChecked():
+            self.current_step = "expert"
+            self._enter_expert_mode()
+        else:
+            self.current_step = "idle"
+            self.expert_panel.enable_remeasure(True)
         self._reset_progress()
+
+    # ------------------------------------------------------------------
+    # Экспертный режим (после завершения всех измерений)
+    # ------------------------------------------------------------------
+
+    def _on_expert_mode_toggled(self, checked: bool) -> None:
+        """Реакция на включение/выключение «Экспертного режима» в меню."""
+        self.expert_panel.setVisible(checked)
+        if checked:
+            # Если измерение уже завершено — войти в эксперт-режим немедленно
+            if (self.current_step == "idle" and self.wf
+                    and hasattr(self.wf, "signals") and self.wf.signals):
+                self.current_step = "expert"
+                self._enter_expert_mode()
+        else:
+            if self.current_step == "expert":
+                self._exit_expert_mode()
+
+    def _exit_expert_mode(self) -> None:
+        """Выйти из экспертного режима без сброса результатов измерения."""
+        self.current_step = "idle"
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.act_save.setEnabled(False)
+        self.expert_panel.enable_expert_mode(False)
+        self.plot.btn_mark_mode.setVisible(False)
+        self.plot.btn_clear_marks.setVisible(False)
+
+    def _enter_expert_mode(self) -> None:
+        """Включить экспертный режим: редактирование таблицы, метки, удаление, CSV."""
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked |
+            QTableWidget.EditTrigger.EditKeyPressed
+        )
+        self.act_save.setEnabled(True)
+        self.act_export_spectrum.setEnabled(self._last_on is not None)
+        self.expert_panel.enable_remeasure(True)
+        self.expert_panel.enable_expert_mode(True)
+        self.expert_panel.set_threshold(self.cfg.threshold_db)
+        # Возвращаем кнопку меток на графике — в экспертном режиме клик на спектр
+        # создаёт новый сигнал для проверки
+        self.plot.btn_mark_mode.setVisible(True)
+        self.plot.btn_clear_marks.setVisible(True)
+        # Обновляем таблицу, чтобы она работала с новыми триггерами
+        if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
+            self._update_table_from_signals(self.wf.signals)
+
+    def _add_expert_signal(self, freq_hz: float) -> None:
+        """Создать новый сигнал по метке оператора и добавить в таблицу."""
+        if not (self.wf and hasattr(self.wf, "signals")):
+            return
+        if any(abs(s.frequency_hz - freq_hz) < 100e3 for s in self.wf.signals):
+            return
+        amp_on = amp_off = 0.0
+        if self._last_on is not None:
+            idx = int(np.searchsorted(self._last_on.frequencies_hz, freq_hz))
+            idx = max(0, min(idx, len(self._last_on.amplitudes_db) - 1))
+            amp_on = float(self._last_on.amplitudes_db[idx])
+        if self._last_off is not None:
+            idx = int(np.searchsorted(self._last_off.frequencies_hz, freq_hz))
+            idx = max(0, min(idx, len(self._last_off.amplitudes_db) - 1))
+            amp_off = float(self._last_off.amplitudes_db[idx])
+        rbw = self._last_on.rbw_hz if self._last_on else 0.0
+        sig = PEMINSignal(
+            frequency_hz=freq_hz,
+            amplitude_on_db=amp_on,
+            amplitude_off_db=amp_off,
+            amplitude_diff_db=amp_on - amp_off,
+            rbw_hz=rbw,
+            detection_method="manual",
+            verified_1=None,
+            verified_2=None,
+        )
+        self.wf.signals.append(sig)
+        self._update_table_from_signals(self.wf.signals)
+        self.plot.plot_signals(self.wf.signals)
+        # Убираем панорамную метку (bookmark-стиль) — она была создана в _add_panorama_mark
+        # до того, как freq_mark_added перенаправил обработку в _add_expert_signal.
+        # Оставляем только сигнальный маркер от plot_signals().
+        self.plot.remove_panorama_mark(freq_hz / 1e6)
+
+    def _delete_signal(self, row: int) -> None:
+        """Удалить сигнал по индексу строки из таблицы и графика."""
+        if not (self.wf and hasattr(self.wf, "signals")):
+            return
+        signals = self.wf.signals
+        if row < 0 or row >= len(signals):
+            return
+        sig = signals.pop(row)
+        self._bookmark_freqs_hz = [
+            f for f in self._bookmark_freqs_hz if abs(f - sig.frequency_hz) >= 100e3
+        ]
+        self.plot.remove_panorama_mark(sig.frequency_hz / 1e6)
+        self.expert_panel.clear_signal()
+        self.live_widget.highlight_mark(None)
+        self.plot.clear_highlight()
+        self._update_table_from_signals(signals)
+        self.plot.plot_signals(signals)
+
+    def _on_expert_delete_requested(self) -> None:
+        """Обработчик кнопки «Удалить сигнал» из expert_panel."""
+        if not (self.wf and hasattr(self.wf, "signals")):
+            return
+        selected = self.table.selectedItems()
+        if not selected:
+            return
+        row = selected[0].row()
+        if row < 0 or row >= len(self.wf.signals):
+            return
+        sig = self.wf.signals[row]
+        reply = QMessageBox.question(
+            self, "Удалить сигнал",
+            f"Удалить {sig.frequency_hz / 1e6:.4f} МГц из таблицы?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._delete_signal(row)
 
     # ------------------------------------------------------------------
     # Удалённое управление тестовым клиентом
@@ -2277,7 +2440,20 @@ class MainWindow(QMainWindow):
                 }
                 v1 = s.verified_1
                 v2 = s.verified_2
-                if v1 is None and v2 is None:
+                # Для ручных сигналов оператор задаёт статус напрямую через dropdown;
+                # verification flags не используем — иначе статус сбрасывается при rebuild
+                if s.detection_method == "manual":
+                    if s.status_color == "yellow":
+                        # Ещё не верифицирован оператором — показываем как потенциальный
+                        status_text = "Потенциальный"
+                        color_hex   = COLOR_WARN
+                    else:
+                        color_hex, status_text = color_map.get(
+                            s.status_color, (COLOR_WAIT, "Ожидание")
+                        )
+                        if s.status_color == "blue":
+                            status_text = "Внешний / Двойной брак"
+                elif v1 is None and v2 is None:
                     status_text = "Ожидание"
                     color_hex = COLOR_WAIT
                 elif v1 is not None and v2 is None:
