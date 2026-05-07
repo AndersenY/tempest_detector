@@ -195,12 +195,12 @@ class ExpertPanel(QGroupBox):
 
         # ── Кнопки переизмерения ──────────────────────────────────────
         row1 = QHBoxLayout()
-        self._btn_essh = QPushButton("Переизм. E(с+ш)")
-        self._btn_esh  = QPushButton("Переизм. E(ш)")
+        self._btn_essh = QPushButton("Переизм. сигнал")
+        self._btn_esh  = QPushButton("Переизм. шум")
         self._btn_essh.setStyleSheet(self._btn_qss())
         self._btn_esh.setStyleSheet(self._btn_qss())
-        self._btn_essh.setToolTip("Захватить N спектров с включённым тестом, взять максимум")
-        self._btn_esh.setToolTip("Захватить N спектров без теста, взять максимум")
+        self._btn_essh.setToolTip("Переизмерить уровень сигнала (устройство включено, N захватов)")
+        self._btn_esh.setToolTip("Переизмерить уровень фонового шума (устройство выключено, N захватов)")
         self._btn_essh.clicked.connect(lambda: self._start_remeasure("signal"))
         self._btn_esh.clicked.connect(lambda: self._start_remeasure("noise"))
         row1.addWidget(self._btn_essh)
@@ -213,7 +213,7 @@ class ExpertPanel(QGroupBox):
         self._btn_peak.setStyleSheet(self._btn_qss())
         self._btn_manual.setStyleSheet(self._btn_qss())
         self._btn_peak.setToolTip("Найти точный максимум из 5 захватов в окне ±10·RBW")
-        self._btn_manual.setToolTip("Вручную задать амплитуду E(с+ш)")
+        self._btn_manual.setToolTip("Вручную задать уровень сигнала")
         self._btn_peak.clicked.connect(lambda: self._start_remeasure("peak"))
         self._btn_manual.clicked.connect(self._set_manual_amplitude)
         row2.addWidget(self._btn_peak)
@@ -250,8 +250,8 @@ class ExpertPanel(QGroupBox):
                 f"  Δ <b>{sig.amplitude_diff_db:+.1f} дБ</b>"
             )
             self._lbl_levels.setText(
-                f"E(с+ш) = <b>{sig.amplitude_on_db:.1f} дБ</b>"
-                f"  &nbsp;  E(ш) = {sig.amplitude_off_db:.1f} дБ"
+                f"Сигнал: <b>{sig.amplitude_on_db:.1f} дБ</b>"
+                f"  &nbsp;  Шум: {sig.amplitude_off_db:.1f} дБ"
             )
             t = self._theme
             colors = {"green": t["tbl_status_ok"],   "red":    t["tbl_status_fail"],
@@ -320,8 +320,8 @@ class ExpertPanel(QGroupBox):
         if self._signal is None:
             return
         val, ok = QInputDialog.getDouble(
-            self, "Задать амплитуду E(с+ш)",
-            "Введите значение E(с+ш) в дБ:",
+            self, "Задать уровень сигнала",
+            "Введите уровень сигнала в дБ:",
             self._signal.amplitude_on_db,
             -200.0, 100.0, 1,
         )

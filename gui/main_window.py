@@ -613,7 +613,7 @@ class MainWindow(QMainWindow):
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(
-            ["Частота (МГц)", "Δ дБ", "ON дБ", "OFF дБ", "Гармоники", "Статус"]
+            ["Частота (МГц)", "Δ дБ", "Сигнал, дБ", "Шум, дБ", "Гармоники", "Статус"]
         )
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
