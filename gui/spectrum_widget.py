@@ -65,11 +65,13 @@ class SpectrumPlotWidget(QWidget):
         self.btn_mark_mode.setToolTip("Режим добавления меток: кликните на спектр для отметки частоты")
         self.btn_mark_mode.setStyleSheet(btn_toggle(t))
         self.btn_mark_mode.toggled.connect(self._on_mark_mode_toggle)
+        self.btn_mark_mode.setVisible(False)   # скрыты по умолчанию — только в экспертном режиме
 
         self.btn_clear_marks = QPushButton("✕ Метки")
         self.btn_clear_marks.setToolTip("Удалить все пользовательские метки")
         self.btn_clear_marks.setStyleSheet(btn_normal(t))
         self.btn_clear_marks.clicked.connect(self._confirm_and_clear_marks)
+        self.btn_clear_marks.setVisible(False)  # скрыты по умолчанию — только в экспертном режиме
 
         self.btn_cursor = QPushButton("⊕ Курсор")
         self.btn_cursor.setCheckable(True)

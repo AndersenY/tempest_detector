@@ -224,6 +224,10 @@ class LiveWidget(QWidget):
         self.btn_resume_live.clicked.connect(self.resume_requested)
         self.btn_resume_live.setVisible(False)
 
+        # btn_mark и btn_clear_marks скрыты по умолчанию — только в экспертном режиме
+        self.btn_mark.setVisible(False)
+        self.btn_clear_marks.setVisible(False)
+
         for w in (self.btn_auto_scale, self.btn_peak, self.btn_reset_peak,
                   self.btn_markers, self.btn_mark, self.btn_clear_marks, self.btn_cursor):
             cp.addWidget(w)
@@ -268,6 +272,12 @@ class LiveWidget(QWidget):
         zw = self.zoom_panel.width()
         zh = self.zoom_panel.height()
         self.zoom_panel.move(self.width() - zw - 40, self.height() - zh - 60)
+
+    def set_mark_available(self, visible: bool) -> None:
+        """Показать/скрыть кнопки добавления меток и пересчитать позицию панели."""
+        self.btn_mark.setVisible(visible)
+        self.btn_clear_marks.setVisible(visible)
+        self._reposition_panels()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

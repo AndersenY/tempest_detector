@@ -1607,8 +1607,8 @@ class MainWindow(QMainWindow):
         # Восстанавливаем метки после clear() — нужны на графике во время фазы 1
         self.plot.set_panorama_marks([f / 1e6 for f in self._bookmark_freqs_hz])
         self.plot.reset_zoom()
-        # Показываем кнопки меток — пользователь может добавлять частоты в ЭТАП 1
-        self.plot.set_mark_buttons_visible(True)
+        # Кнопки меток на этапе 1 — только если включён экспертный режим
+        self.plot.set_mark_buttons_visible(self.act_expert_mode.isChecked())
 
     def _on_table_selection_changed(self):
         if not self.table.selectedItems():
@@ -2014,7 +2014,9 @@ class MainWindow(QMainWindow):
         self._bookmark_freqs_hz.clear()
         self.plot.clear()
         self.plot.clear_panorama_marks()
-        self.plot.set_mark_buttons_visible(True)
+        # После сброса — стартовый экран (idle). Кнопки меток видны только в эксперт. режиме.
+        self.plot.set_mark_buttons_visible(self.act_expert_mode.isChecked())
+        self.live_widget.set_mark_available(False)
         self.table.setRowCount(0)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._reset_progress()
@@ -2142,6 +2144,13 @@ class MainWindow(QMainWindow):
     def _on_expert_mode_toggled(self, checked: bool) -> None:
         """Реакция на включение/выключение «Экспертного режима» в меню."""
         self.expert_panel.setVisible(checked)
+        # Кнопки меток — только в экспертном режиме
+        if self.current_step == "live_preview":
+            # Во время предпросмотра — live_widget
+            self.live_widget.set_mark_available(checked)
+        elif self.current_step == "idle":
+            # Стартовый экран (spectrum_widget до первого измерения)
+            self.plot.set_mark_buttons_visible(checked)
         if checked:
             # Если измерение уже завершено — войти в эксперт-режим немедленно
             if (self.current_step == "idle" and self.wf
@@ -2159,6 +2168,7 @@ class MainWindow(QMainWindow):
         self.act_save.setEnabled(False)
         self.expert_panel.enable_expert_mode(False)
         self.plot.set_mark_buttons_visible(False)
+        self.live_widget.set_mark_available(False)
 
     def _enter_expert_mode(self) -> None:
         """Включить экспертный режим: редактирование таблицы, метки, удаление, CSV."""
@@ -2171,9 +2181,9 @@ class MainWindow(QMainWindow):
         self.expert_panel.enable_remeasure(True)
         self.expert_panel.enable_expert_mode(True)
         self.expert_panel.set_threshold(self.cfg.threshold_db)
-        # Возвращаем кнопку меток на графике — в экспертном режиме клик на спектр
-        # создаёт новый сигнал для проверки
+        # Кнопки меток — только в экспертном режиме
         self.plot.set_mark_buttons_visible(True)
+        self.live_widget.set_mark_available(True)
         # Обновляем таблицу, чтобы она работала с новыми триггерами
         if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
             self._update_table_from_signals(self.wf.signals)
