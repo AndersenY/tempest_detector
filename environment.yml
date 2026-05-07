@@ -12,4 +12,3 @@ dependencies:
     - scipy>=1.11.4
     - sounddevice>=0.5.5
     - pyrtlsdr>=0.3.0
-    - pyhackrf>=0.2.0

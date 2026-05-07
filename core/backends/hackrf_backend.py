@@ -5,7 +5,7 @@ import threading
 import numpy as np
 from ctypes import (CDLL, CFUNCTYPE, Structure, POINTER, cast, pointer,
                     c_int, c_uint8, c_uint32, c_uint64, c_double,
-                    c_void_p, c_byte, addressof)
+                    c_void_p, c_byte)
 from .base import BaseInstrument
 from ..config import PanoramaConfig
 from ..models import Spectrum
@@ -31,7 +31,7 @@ def _load_hackrf_lib():
                     os.add_dll_directory(lib_dir)
                 return CDLL(path)
         raise OSError(
-            "hackrf.dll не найден. Положите hackrf.dll и libusb-1.0.dll "
+            "hackrf-0.dll не найден. Положите hackrf-0.dll и libusb-1.0.dll "
             "в папку lib/ рядом с проектом."
         )
     else:
