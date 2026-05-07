@@ -122,20 +122,16 @@ class HackRfBackend(BaseInstrument):
     def _stop_streaming(self, wait: bool = True) -> None:
         if not self._streaming or self._device is None:
             return
-        # 1. Мгновенно блокируем callback
+        # Сначала блокируем callback через флаг — он вернёт 0, но ctypes-объект
+        # остаётся живым, пока libhackrf не подтвердит остановку.
         self._closing = True
         self._rx_abort.set()
-        
-        # 2. ОБЯЗАТЕЛЬНО обнуляем ссылку ДО вызова stop_rx
-        self._c_rx_cb = None
 
-        # 3. Останавливаем RX
         try:
             libhackrf.hackrf_stop_rx(self._device.dev_p)
         except Exception:
             pass
 
-        # 4. Ждём подтверждения от MCU
         if wait:
             deadline = time.perf_counter() + 1.0
             while time.perf_counter() < deadline:
@@ -146,6 +142,8 @@ class HackRfBackend(BaseInstrument):
                     break
                 time.sleep(0.02)
 
+        # Только здесь железо гарантированно не вызовет callback → безопасно обнулять
+        self._c_rx_cb = None
         self._streaming = False
         self._rx_abort.clear()
         self._rx_done.clear()
