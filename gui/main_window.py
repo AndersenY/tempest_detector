@@ -823,7 +823,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.spin_avg)
 
         # MaxHold
-        self.chk_maxhold = QCheckBox("MaxHold")
+        self.chk_maxhold = QCheckBox("Уд. максимума")
         self.chk_maxhold.setChecked(self.cfg.use_max_hold)
         layout.addWidget(self.chk_maxhold)
 
@@ -1087,6 +1087,7 @@ class MainWindow(QMainWindow):
         self._settle_timer.stop()
 
         self._stop_panorama_preview()
+        self._stop_zero_span()   # остановить до закрытия SDR, иначе librtlsdr крэшится
         if self.wf:
             self.wf.stop()
 
@@ -1693,7 +1694,7 @@ class MainWindow(QMainWindow):
         else:
             self._spectrum_stack.setCurrentIndex(0)
             self.expert_panel.set_zero_span_active(False)
-            QMessageBox.warning(self, "Zero Span", f"Ошибка измерения:\n{msg}")
+            QMessageBox.warning(self, "Мониторинг частоты", f"Ошибка измерения:\n{msg}")
 
     def _stop_zero_span(self) -> None:
         if self._zs_worker is not None:

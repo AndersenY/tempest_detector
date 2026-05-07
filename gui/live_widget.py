@@ -108,14 +108,14 @@ class LiveWidget(QWidget):
         self._live_curve = pi.plot(
             [], [],
             pen=pg.mkPen("#39FF14", width=0.8),
-            name="Live",
+            name="Текущий",
             fillLevel=self._FILL_LEVEL_DB,
             fillBrush=pg.mkBrush(57, 255, 20, 22),
         )
         self._peak_curve = pi.plot(
             [], [],
             pen=pg.mkPen("#FF8C00", width=0.8, style=Qt.PenStyle.DashLine),
-            name="Peak Hold",
+            name="Удержание пика",
         )
         self._peak_curve.setVisible(self._show_peak)
 
@@ -167,7 +167,7 @@ class LiveWidget(QWidget):
         self.btn_auto_scale.setToolTip("Сбросить масштаб")
         self.btn_auto_scale.clicked.connect(self.reset_view)
 
-        self.btn_peak = QPushButton("Peak Hold")
+        self.btn_peak = QPushButton("Удержание пика")
         self.btn_peak.setCheckable(True)
         self.btn_peak.setChecked(True)
         self.btn_peak.setStyleSheet(btn_toggle(t))

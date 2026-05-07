@@ -157,10 +157,10 @@ class ExpertPanel(QGroupBox):
         """Синхронизировать состояние кнопки с внешним управлением (MainWindow)."""
         self._btn_zero_span.setChecked(active)
         if active:
-            self._btn_zero_span.setText("Стоп Zero Span")
+            self._btn_zero_span.setText("Остановить мониторинг")
             self._btn_zero_span.setStyleSheet(self._btn_active_qss())
         else:
-            self._btn_zero_span.setText("Zero Span + Аудио")
+            self._btn_zero_span.setText("Мониторинг частоты + Аудио")
             self._btn_zero_span.setStyleSheet(self._btn_qss())
 
     # ------------------------------------------------------------------
@@ -221,12 +221,12 @@ class ExpertPanel(QGroupBox):
         root.addLayout(row2)
 
         # ── Zero Span + аудиомонитор ─────────────────────────────────
-        self._btn_zero_span = QPushButton("Zero Span + Аудио")
+        self._btn_zero_span = QPushButton("Мониторинг частоты + Аудио")
         self._btn_zero_span.setCheckable(True)
         self._btn_zero_span.setStyleSheet(self._btn_qss())
         self._btn_zero_span.setToolTip(
-            "Непрерывный мониторинг выбранной частоты.\n"
-            "График амплитуды vs время + аудиотон для поиска максимума ДН."
+            "Непрерывный мониторинг амплитуды на выбранной частоте.\n"
+            "График уровня во времени + аудиотон для поиска максимума ДН."
         )
         self._btn_zero_span.clicked.connect(self._toggle_zero_span)
         root.addWidget(self._btn_zero_span)

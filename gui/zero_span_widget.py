@@ -29,7 +29,7 @@ class ZeroSpanWidget(QWidget):
 
         # Шапка: частота слева, текущий уровень справа
         header = QHBoxLayout()
-        self._lbl_title = QLabel("Zero Span")
+        self._lbl_title = QLabel("Мониторинг частоты")
         self._lbl_title.setStyleSheet(
             "color: #e0e0e0; font-size: 13px; font-weight: bold;"
         )
@@ -78,7 +78,7 @@ class ZeroSpanWidget(QWidget):
     def set_signal_info(self, freq_hz: float, baseline_db: float) -> None:
         """Установить заголовок и базовую линию перед стартом."""
         self._lbl_title.setText(
-            f"Zero Span  —  <b>{freq_hz / 1e6:.4f} МГц</b>"
+            f"Мониторинг частоты  —  <b>{freq_hz / 1e6:.4f} МГц</b>"
         )
         self._baseline.setValue(baseline_db)
 
