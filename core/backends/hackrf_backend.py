@@ -149,6 +149,7 @@ class HackRfBackend(BaseInstrument):
         self._streaming = False
         self._rx_abort.clear()
         self._rx_done.clear()
+        self._closing = False
 
     def _collect_samples(self, num_samples: int) -> np.ndarray:
         num_bytes = num_samples * 2
@@ -214,7 +215,9 @@ class HackRfBackend(BaseInstrument):
         self._start_streaming()
 
     _SWEEP_SETTLE_S = 0.010; _SWEEP_SETTLE_FAST_S = 0.010
-    _CAPTURE_SETTLE_S = 0.005; _CAPTURE_SETTLE_FAST_S = 0.005
+    # Settle между усреднениями одной частоты = 0: стриминг непрерывен,
+    # перенастройки нет, задержка только увеличивает окно усреднения без пользы.
+    _CAPTURE_SETTLE_S = 0.0; _CAPTURE_SETTLE_FAST_S = 0.0
 
     def capture_spectrum(self) -> Spectrum:
         if not self._device or not self._cfg: raise RuntimeError("HackRF не настроен")

@@ -355,8 +355,15 @@ class MainWindow(QMainWindow):
         self._hw = hw
         self._update_hw_limits()
 
+    # Дефолты по устройствам: (start_mhz, stop_mhz, avg_count)
+    _HW_DEFAULTS = {
+        "hackrf":  (100.0, 110.0, 15),
+        "rtlsdr":  (102.0, 104.0, 50),
+        "demo":    (102.0, 104.0, 50),
+    }
+
     def _update_hw_limits(self) -> None:
-        """Обновляет лимиты частот и live BW под текущий бэкенд."""
+        """Обновляет лимиты частот, live BW и дефолтные параметры под текущий бэкенд."""
         if self._hw == "hackrf":
             self._live_bw_hz  = 10_000_000
             self._freq_min_hz = 1e6
@@ -364,6 +371,7 @@ class MainWindow(QMainWindow):
             self.spin_start_freq.setRange(1, 6000)
             self.spin_stop_freq.setRange(2, 6000)
             self.spin_gain.setRange(0, 62)
+            self.setWindowTitle("ПЭМИН Детектор (HackRF One)")
         else:
             self._live_bw_hz  = 2_000_000
             self._freq_min_hz = 24e6
@@ -371,6 +379,16 @@ class MainWindow(QMainWindow):
             self.spin_start_freq.setRange(24, 1750)
             self.spin_stop_freq.setRange(25, 1750)
             self.spin_gain.setRange(0, 50)
+            self.setWindowTitle("ПЭМИН Детектор (RTL-SDR)")
+
+        start_mhz, stop_mhz, avg = self._HW_DEFAULTS.get(self._hw, (102.0, 104.0, 50))
+        self.spin_start_freq.blockSignals(True)
+        self.spin_stop_freq.blockSignals(True)
+        self.spin_start_freq.setValue(start_mhz)
+        self.spin_stop_freq.setValue(stop_mhz)
+        self.spin_start_freq.blockSignals(False)
+        self.spin_stop_freq.blockSignals(False)
+        self.spin_avg.setValue(avg)
 
     def _make_backend(self) -> BaseInstrument:
         """Создать экземпляр бэкенда под текущий self._hw."""
@@ -1080,6 +1098,7 @@ class MainWindow(QMainWindow):
             self.ctrl.close()
 
         self._do_ui_reset()
+        self._update_hw_limits()
 
     def _on_control_button_clicked(self):
         if self.current_step == "idle":
