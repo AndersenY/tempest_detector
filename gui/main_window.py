@@ -2075,8 +2075,11 @@ class MainWindow(QMainWindow):
         """Пользователь поставил метку на панораме."""
         freq_hz = freq_mhz * 1e6
         if self.current_step == "expert":
-            # Экспертный режим: метка создаёт новый сигнал для проверки
+            # Экспертный режим: метка создаёт новый сигнал для проверки.
+            # remove_panorama_mark вызывается ВСЕГДА — даже если _add_expert_signal
+            # вернулся рано из-за дубликата, иначе оранжевая метка останется сиротой.
             self._add_expert_signal(freq_hz)
+            self.plot.remove_panorama_mark(freq_mhz)
             return
         if not any(abs(f - freq_hz) < 100e3 for f in self._bookmark_freqs_hz):
             self._bookmark_freqs_hz.append(freq_hz)
@@ -2208,10 +2211,6 @@ class MainWindow(QMainWindow):
         self.wf.signals.append(sig)
         self._update_table_from_signals(self.wf.signals)
         self.plot.plot_signals(self.wf.signals)
-        # Убираем панорамную метку (bookmark-стиль) — она была создана в _add_panorama_mark
-        # до того, как freq_mark_added перенаправил обработку в _add_expert_signal.
-        # Оставляем только сигнальный маркер от plot_signals().
-        self.plot.remove_panorama_mark(freq_hz / 1e6)
 
     def _delete_signal(self, row: int) -> None:
         """Удалить сигнал по индексу строки из таблицы и графика."""
