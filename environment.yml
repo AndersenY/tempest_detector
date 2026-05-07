@@ -1,0 +1,15 @@
+name: sdr
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.11
+  - pip
+  - pip:
+    - PyQt6>=6.6.1
+    - numpy>=1.26.4
+    - pyqtgraph>=0.13.4
+    - scipy>=1.11.4
+    - sounddevice>=0.5.5
+    - pyrtlsdr>=0.3.0
+    - pyhackrf>=0.2.0
