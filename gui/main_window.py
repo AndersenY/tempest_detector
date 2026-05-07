@@ -1608,8 +1608,7 @@ class MainWindow(QMainWindow):
         self.plot.set_panorama_marks([f / 1e6 for f in self._bookmark_freqs_hz])
         self.plot.reset_zoom()
         # Показываем кнопки меток — пользователь может добавлять частоты в ЭТАП 1
-        self.plot.btn_mark_mode.setVisible(True)
-        self.plot.btn_clear_marks.setVisible(True)
+        self.plot.set_mark_buttons_visible(True)
 
     def _on_table_selection_changed(self):
         if not self.table.selectedItems():
@@ -2015,8 +2014,7 @@ class MainWindow(QMainWindow):
         self._bookmark_freqs_hz.clear()
         self.plot.clear()
         self.plot.clear_panorama_marks()
-        self.plot.btn_mark_mode.setVisible(True)
-        self.plot.btn_clear_marks.setVisible(True)
+        self.plot.set_mark_buttons_visible(True)
         self.table.setRowCount(0)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._reset_progress()
@@ -2160,8 +2158,7 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.act_save.setEnabled(False)
         self.expert_panel.enable_expert_mode(False)
-        self.plot.btn_mark_mode.setVisible(False)
-        self.plot.btn_clear_marks.setVisible(False)
+        self.plot.set_mark_buttons_visible(False)
 
     def _enter_expert_mode(self) -> None:
         """Включить экспертный режим: редактирование таблицы, метки, удаление, CSV."""
@@ -2176,8 +2173,7 @@ class MainWindow(QMainWindow):
         self.expert_panel.set_threshold(self.cfg.threshold_db)
         # Возвращаем кнопку меток на графике — в экспертном режиме клик на спектр
         # создаёт новый сигнал для проверки
-        self.plot.btn_mark_mode.setVisible(True)
-        self.plot.btn_clear_marks.setVisible(True)
+        self.plot.set_mark_buttons_visible(True)
         # Обновляем таблицу, чтобы она работала с новыми триггерами
         if self.wf and hasattr(self.wf, "signals") and self.wf.signals:
             self._update_table_from_signals(self.wf.signals)
@@ -2329,8 +2325,7 @@ class MainWindow(QMainWindow):
 
         self.plot.clear()
         # Скрываем кнопки меток — метки уже переданы в workflow, дальше они не нужны
-        self.plot.btn_mark_mode.setVisible(False)
-        self.plot.btn_clear_marks.setVisible(False)
+        self.plot.set_mark_buttons_visible(False)
         self.plot.set_freq_range(x_min, x_max)
         self.plot.add("ON (Test)",   f_mhz, on.amplitudes_db,  self._theme["curve_on"],   width=0.8, theme_key="curve_on")
         self.plot.add("OFF (Noise)", f_mhz, off.amplitudes_db, self._theme["curve_off"],  width=0.8, theme_key="curve_off")

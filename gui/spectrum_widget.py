@@ -245,6 +245,12 @@ class SpectrumPlotWidget(QWidget):
         zoom_h = self.zoom_panel.height()
         self.zoom_panel.move(self.width() - zoom_w - 40, self.height() - zoom_h - 60)
 
+    def set_mark_buttons_visible(self, visible: bool) -> None:
+        """Показать/скрыть кнопки меток и сразу пересчитать позицию панели."""
+        self.btn_mark_mode.setVisible(visible)
+        self.btn_clear_marks.setVisible(visible)
+        self._reposition_panels()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_panels()
