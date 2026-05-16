@@ -255,7 +255,7 @@ class HackRfBackend(BaseInstrument):
         with self._rx_lock:
             self._rx_buffer.clear()
             self._rx_needed = num_bytes
-        self._rx_done.clear()
+            self._rx_done.clear()   # внутри замка — callback не может выставить флаг между clear буфера и clear события
         self._rx_abort.clear()
         self._closing = False
 
@@ -315,11 +315,12 @@ class HackRfBackend(BaseInstrument):
         self._amp_enabled = cfg.sdr_gain_db > 50
 
         self._apply_hw_settings()
+        time.sleep(0.030)   # ждём стабилизации PLL после смены частоты/SR
         self._start_streaming()
 
     _SWEEP_SETTLE_S = 0.010
     _SWEEP_SETTLE_FAST_S = 0.010
-    _CAPTURE_SETTLE_S = 0.0
+    _CAPTURE_SETTLE_S = 0.005   # 5 мс между итерациями усреднения — декоррелирует шум
     _CAPTURE_SETTLE_FAST_S = 0.0
 
     def capture_spectrum(self) -> Spectrum:

@@ -372,7 +372,7 @@ class MainWindow(QMainWindow):
 
     # Дефолты по устройствам: (start_mhz, stop_mhz, avg_count)
     _HW_DEFAULTS = {
-        "hackrf":  (100.0, 110.0, 15),
+        "hackrf":  (100.0, 110.0, 50),
         "rtlsdr":  (102.0, 104.0, 50),
         "demo":    (102.0, 104.0, 50),
     }
