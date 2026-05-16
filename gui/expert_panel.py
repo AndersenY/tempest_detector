@@ -3,12 +3,12 @@ from PyQt6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QInputDialog, QMessageBox, QProgressBar,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.backends import BaseInstrument
 from core.models import PEMINSignal
 from core.signal_processor import find_peak_in_window
-from gui.theme import DARK
+from gui.theme import DARK, btn_danger
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +107,14 @@ class ExpertPanel(QGroupBox):
             f" color: {t['expert_btn_dis_fg']}; }}"
         )
 
+    @staticmethod
+    def _btn_delete_qss(t: dict) -> str:
+        return (
+            btn_danger(t)
+            + f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
+            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
+        )
+
     def _btn_active_qss(self) -> str:
         return (
             "QPushButton { background-color: #1565C0; color: white; border: none;"
@@ -124,6 +132,7 @@ class ExpertPanel(QGroupBox):
             self._btn_zero_span.setStyleSheet(self._btn_active_qss())
         else:
             self._btn_zero_span.setStyleSheet(btn)
+        self._btn_delete.setStyleSheet(self._btn_delete_qss(t))
         self._progress.setStyleSheet(
             f"QProgressBar {{ border: none; background: {t['bg_input']};"
             f" border-radius: 3px; }}"
@@ -254,12 +263,7 @@ class ExpertPanel(QGroupBox):
 
         # ── Удаление сигнала (экспертный режим) ──────────────────────
         self._btn_delete = QPushButton("Удалить сигнал из таблицы")
-        self._btn_delete.setStyleSheet(
-            "QPushButton { background-color: #7b1a1a; color: white; border: none;"
-            " border-radius: 3px; padding: 4px 8px; font-size: 12px; }"
-            " QPushButton:hover { background-color: #9b2a2a; }"
-            " QPushButton:disabled { background-color: #3a2020; color: #666; }"
-        )
+        self._btn_delete.setStyleSheet(self._btn_delete_qss(self._theme))
         self._btn_delete.setToolTip("Удалить выбранный сигнал из таблицы и графика")
         self._btn_delete.clicked.connect(self.delete_requested)
         self._btn_delete.setVisible(False)
