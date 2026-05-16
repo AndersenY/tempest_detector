@@ -1,4 +1,5 @@
 import sys
+import os
 import csv
 import types
 import numpy as np
@@ -11,7 +12,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QCheckBox, QStackedWidget, QComboBox,
                              QStyledItemDelegate, QAbstractItemDelegate)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt6.QtGui import QColor, QAction, QActionGroup
+from PyQt6.QtGui import QColor, QAction, QActionGroup, QIcon
 from core.config import PanoramaConfig
 from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator, HackRfBackend
 from core.models import Spectrum, PEMINSignal
@@ -150,6 +151,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ПЭМИН Детектор (RTL-SDR)")
+        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "image", "icon.png")
+        self.setWindowIcon(QIcon(_icon_path))
         self.resize(1200, 800)
 
         self.setStyleSheet("""
