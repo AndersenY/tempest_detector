@@ -34,6 +34,13 @@ class RemoteControlServer:
         self._port: int = PORT_DEFAULT
         self.on_client_count_changed: Callable[[int], None] = lambda n: None
 
+        # ACK-синхронизация: сервер ждёт подтверждения от всех клиентов
+        # после отправки test_start / test_stop перед началом settle-паузы.
+        self._ack_count: int = 0
+        self._ack_needed: int = 0
+        self._ack_event: threading.Event = threading.Event()
+        self._ack_lock: threading.Lock = threading.Lock()
+
     # ── Публичный интерфейс ────────────────────────────────────────────
 
     @property
@@ -88,12 +95,31 @@ class RemoteControlServer:
             self._clients.clear()
 
     def send_test_start(self) -> int:
+        self._reset_acks()
         return self._broadcast({"cmd": "test_start"})
 
     def send_test_stop(self) -> int:
+        self._reset_acks()
         return self._broadcast({"cmd": "test_stop"})
 
+    def wait_for_acks(self, timeout_s: float = 5.0) -> bool:
+        """
+        Блокирует вызывающий поток до получения ACK от всех клиентов
+        или до истечения таймаута. Возвращает True если все ответили.
+        Если клиентов нет — возвращает True немедленно.
+        """
+        return self._ack_event.wait(timeout_s)
+
     # ── Внутренняя реализация ──────────────────────────────────────────
+
+    def _reset_acks(self) -> None:
+        with self._ack_lock:
+            self._ack_count = 0
+            with self._lock:
+                self._ack_needed = len(self._clients)
+            self._ack_event.clear()
+            if self._ack_needed == 0:
+                self._ack_event.set()
 
     def _broadcast(self, msg: dict) -> int:
         data = (json.dumps(msg) + "\n").encode()
@@ -129,11 +155,27 @@ class RemoteControlServer:
             ).start()
 
     def _watch_client(self, conn: socket.socket) -> None:
+        buf = ""
         try:
             while self._running:
                 data = conn.recv(256)
                 if not data:
                     break
+                buf += data.decode(errors="replace")
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if msg.get("status") == "ack":
+                        with self._ack_lock:
+                            self._ack_count += 1
+                            if self._ack_count >= self._ack_needed:
+                                self._ack_event.set()
         except OSError:
             pass
         finally:

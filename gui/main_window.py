@@ -1582,6 +1582,8 @@ class MainWindow(QMainWindow):
         # Автоматический режим: workflow сам переключает фазы без участия оператора
         if self._control_mode == "auto" and self._should_auto_control_test():
             self.wf.auto_settle_s = self._spin_settle.value() / 1000.0
+            if self._remote_server.client_count > 0:
+                self.wf.wait_for_client_ready = self._remote_server.wait_for_acks
         self.thread = Worker(self.wf)
 
         Q = Qt.ConnectionType.QueuedConnection

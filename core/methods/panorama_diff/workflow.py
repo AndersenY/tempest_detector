@@ -36,9 +36,13 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
         self._pause_event = threading.Event()
         self._stop_flag = False
 
-        # Буферное время (с) после команды ON/OFF до начала захвата.
+        # Буферное время (с) после подтверждения клиента до начала захвата.
         # 0.0 = ручной режим (ждать клика пользователя).
         self.auto_settle_s: float = 0.0
+
+        # Callback(timeout_s) → bool: ждать ACK от клиентов перед settle-паузой.
+        # None — не ждать (демо-режим или нет удалённых клиентов).
+        self.wait_for_client_ready: Callable[[float], bool] | None = None
 
         self.on_status = lambda s: None
         self.on_progress = lambda p: None
@@ -77,12 +81,18 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
         if self.auto_settle_s > 0.0:
             if activate is not None:
                 label = "ВКЛ" if activate else "ВЫКЛ"
-                self.on_status(
-                    f"[Авто] Команда {label} отправлена — "
-                    f"буфер {self.auto_settle_s:.1f} с..."
-                )
+                self.on_status(f"[Авто] Команда {label} отправлена, ожидание клиента...")
                 self.on_test_activate(activate)
-                # Ждём settle, но проверяем stop_flag каждые 100 мс
+                # Ждём подтверждения (ACK) от клиентов, что тест реально запустился
+                if self.wait_for_client_ready is not None:
+                    ready = self.wait_for_client_ready(5.0)
+                    if not ready:
+                        self.on_status("[Авто] Таймаут ACK от клиента, продолжаем...")
+                # Settle-пауза начинается ПОСЛЕ подтверждения клиента
+                self.on_status(
+                    f"[Авто] Клиент подтвердил {label} — "
+                    f"стабилизация {self.auto_settle_s:.1f} с..."
+                )
                 deadline = time.monotonic() + self.auto_settle_s
                 while time.monotonic() < deadline:
                     if self._stop_flag:
