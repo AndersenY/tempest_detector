@@ -32,6 +32,7 @@ class RemoteControlServer:
         self._server_sock: socket.socket | None = None
         self._running = False
         self._port: int = PORT_DEFAULT
+        self._current_mode: str = "manual"
         self.on_client_count_changed: Callable[[int], None] = lambda n: None
 
         # ACK-синхронизация: сервер ждёт подтверждения от всех клиентов
@@ -94,6 +95,11 @@ class RemoteControlServer:
                     pass
             self._clients.clear()
 
+    def set_mode(self, mode: str) -> None:
+        """Обновить режим и уведомить всех подключённых клиентов."""
+        self._current_mode = mode
+        self._broadcast({"cmd": "mode", "mode": mode})
+
     def send_test_start(self) -> int:
         self._reset_acks()
         return self._broadcast({"cmd": "test_start"})
@@ -150,6 +156,10 @@ class RemoteControlServer:
             with self._lock:
                 self._clients.append(conn)
             self.on_client_count_changed(len(self._clients))
+            try:
+                conn.sendall((json.dumps({"cmd": "ping", "mode": self._current_mode}) + "\n").encode())
+            except OSError:
+                pass
             threading.Thread(
                 target=self._watch_client, args=(conn,), daemon=True
             ).start()

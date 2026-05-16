@@ -2317,10 +2317,10 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed(self, _: int) -> None:
         mode = self._control_mode
-        # Буфер актуален только в полу- и автоматическом режимах
         enabled = (mode != "manual")
         self._spin_settle.setEnabled(enabled)
         self._lbl_settle.setEnabled(enabled)
+        self._remote_server.set_mode(mode)
 
     def _on_remote_client_count(self, count: int) -> None:
         # Вызывается из фонового потока — emit через signal безопасен
