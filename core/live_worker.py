@@ -14,7 +14,7 @@ class LiveWorker(QThread):
     update_config(), конфиг применяется при следующей итерации цикла.
     """
 
-    spectrum_ready = pyqtSignal(object, object)   # freqs_hz ndarray, amps_db ndarray
+    spectrum_ready = pyqtSignal(object, object)   # freqs_hz (ndarray), amps_db (ndarray)
     error = pyqtSignal(str)
 
     def __init__(self, ctrl: BaseInstrument, cfg: PanoramaConfig) -> None:

@@ -8,7 +8,7 @@ from ..models import Spectrum
 
 
 class RtlSdrBackend(BaseInstrument):
-    """RTL-SDR бэкенд — прямой преемник SDRController."""
+    """Бэкенд для RTL-SDR приёмников."""
 
     _SAFE_SR   = 2_400_000
     # Порог одиночного захвата: если span ≤ этого значения — один вызов _capture_single.
@@ -121,7 +121,7 @@ class RtlSdrBackend(BaseInstrument):
             sdr.device_opened = False
         except Exception:
             pass
-        sdr.close = lambda: None  # belt-and-suspenders
+        sdr.close = lambda: None  # дополнительная защита на случай повторного вызова
 
     # ------------------------------------------------------------------
 

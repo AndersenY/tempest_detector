@@ -498,7 +498,7 @@ class MainWindow(QMainWindow):
         self._lbl_remote_addr.setStyleSheet(
             f"color: {t['remote_addr']}; font-family: monospace;"
         )
-        # restore spinbox (overridden by remote_box QSS, but keep explicit for min-width)
+        # Явно задаём стиль спинбокса: QSS remote_box перекрывает его, но min-width нужен
         self._spin_settle.setStyleSheet(
             f"QSpinBox {{ background: {t['bg_input']}; color: {t['text']};"
             f" border: 1px solid {t['border_input']};"
@@ -609,7 +609,7 @@ class MainWindow(QMainWindow):
         self.live_widget.resume_requested.connect(self._on_live_resume_requested)
         self._spectrum_stack = QStackedWidget()
         self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
-        self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — zero span
+        self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — нулевой обзор
         self._spectrum_stack.addWidget(self.live_widget)     # index 2 — прямой эфир
         main_layout.addWidget(self._spectrum_stack, 3)
 

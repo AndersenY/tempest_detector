@@ -214,7 +214,7 @@ class ExpertPanel(QGroupBox):
 
         # ── Прогресс переизмерения ────────────────────────────────────
         self._progress = QProgressBar()
-        self._progress.setRange(0, 0)   # indeterminate
+        self._progress.setRange(0, 0)   # неопределённый режим (бегущий индикатор)
         self._progress.setVisible(False)
         self._progress.setFixedHeight(6)
         self._progress.setStyleSheet("""
@@ -389,7 +389,7 @@ class ExpertPanel(QGroupBox):
             self.signal_modified.emit(self._signal_idx)
 
     # ------------------------------------------------------------------
-    # Zero Span toggle
+    # Переключение режима нулевого обзора (Zero Span)
     # ------------------------------------------------------------------
 
     def _toggle_zero_span(self, checked: bool) -> None:

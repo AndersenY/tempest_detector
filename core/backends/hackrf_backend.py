@@ -131,7 +131,7 @@ class HackRfBackend(BaseInstrument):
         self._initialized = False
 
     # ------------------------------------------------------------------
-    # BaseInstrument interface
+    # Интерфейс BaseInstrument
     # ------------------------------------------------------------------
     @property
     def name(self) -> str:

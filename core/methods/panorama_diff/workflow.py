@@ -59,8 +59,8 @@ class PanoramaDiffWorkflow(AbstractDetectionMethod):
 
     def _wait_for_user(self):
         self._pause_event.clear()
-        # Poll with a short timeout so _stop_flag is checked promptly
-        # even if stop() is called between event.clear() and event.wait().
+        # Короткий таймаут гарантирует проверку _stop_flag даже если stop()
+        # вызван между event.clear() и event.wait().
         while not self._pause_event.wait(timeout=0.2):
             if self._stop_flag:
                 raise InterruptedError("Process stopped by user")

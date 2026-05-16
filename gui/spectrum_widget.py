@@ -410,18 +410,12 @@ class SpectrumPlotWidget(QWidget):
         
         if any(abs(line.value() - freq_mhz) < self._MIN_MARK_SPACING_MHZ
                for line in self._panorama_marks):
-            return  # silently ignore
-        
+            return  # метка слишком близко к существующей — игнорируем
+
         line = pg.InfiniteLine(
             angle=90,
             movable=False,
             pen=pg.mkPen(self._theme["panorama_mark"], width=1.5, style=Qt.PenStyle.DashLine),
-            # label=f"{freq_mhz:.3f} МГц",
-            # labelOpts={
-            #     "color": "#FF9800",
-            #     "position": 0.92,
-            #     "fill": pg.mkBrush(20, 10, 0, 190),
-            # },
         )
         line.setPos(freq_mhz)
         line.setVisible(self.markers_visible)

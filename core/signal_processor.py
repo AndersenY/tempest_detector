@@ -12,10 +12,9 @@ def estimate_display_line(spectrum: Spectrum) -> float:
     a = spectrum.amplitudes_db
     median = float(np.median(a))
     q25, q75 = np.percentile(a, [25, 75])
-    sigma = (q75 - q25) / 1.349   # перевод IQR → σ (Gaussian)
-    # On a perfectly flat/low-noise spectrum sigma → 0, which collapses the
-    # display line to the median and triggers false detections. Enforce a
-    # minimum of 0.5 dB to keep a small but non-zero guard margin.
+    sigma = (q75 - q25) / 1.349   # перевод IQR → σ (гауссово приближение)
+    # При идеально плоском/малошумящем спектре σ → 0, что схлопывает Display Line
+    # к медиане и вызывает ложные срабатывания. Минимальный запас 0.5 дБ предотвращает это.
     sigma = max(sigma, 0.5)
     return median + 2.0 * sigma
 

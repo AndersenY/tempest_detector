@@ -1,6 +1,6 @@
 DARK: dict = {
     "name": "dark",
-    # Backgrounds
+    # Фоны
     "bg_window":      "#1e1e1e",
     "bg_widget":      "#2b2b2b",
     "bg_plot":        "#2b2b2b",
@@ -12,18 +12,18 @@ DARK: dict = {
     "bg_header":      "#333333",
     "bg_progress":    "#333333",
     "bg_instruction": "#2b2b2b",
-    # Borders / separators
+    # Границы и разделители
     "border":         "#444444",
     "border_input":   "#555555",
     "sep":            "#555555",
-    # Text
+    # Текст
     "text":           "#e0e0e0",
     "text_dim":       "#cccccc",
     "text_muted":     "#aaaaaa",
     "text_off":       "#888888",
     "text_axis":      "#ffffff",
     "text_axis_dim":  "#cccccc",
-    # Toolbar buttons (overlay panels on plots)
+    # Кнопки панели инструментов (наложение на графиках)
     "btn_bg":           "#4a4a4a",
     "btn_hover":        "#5e5e5e",
     "btn_fg":           "#e0e0e0",
@@ -36,24 +36,24 @@ DARK: dict = {
     "btn_primary_bg":    "#2b5a8c",
     "btn_primary_hover": "#1e3d5c",
     "progress_chunk":    "#2b5a8c",
-    # Expert panel buttons
+    # Кнопки экспертной панели
     "expert_btn_bg":       "#3a3a3a",
     "expert_btn_fg":       "#e0e0e0",
     "expert_btn_bdr":      "#555555",
     "expert_btn_hover":    "#505050",
     "expert_btn_dis_bg":   "#2a2a2a",
     "expert_btn_dis_fg":   "#666666",
-    # Menu bar
+    # Строка меню
     "mb_bg":     "#2b2b2b",
     "mb_fg":     "#e0e0e0",
     "mb_sel":    "#444444",
     "menu_bg":   "#2b2b2b",
     "menu_sel":  "#3a3a3a",
     "menu_bdr":  "#555555",
-    # pyqtgraph axes / legend
+    # Оси и легенда pyqtgraph
     "axis_pen":     "#555555",
     "legend_brush": (50, 50, 50, 200),
-    # Special labels
+    # Специальные метки
     "remote_title":  "#aaaaaa",
     "remote_addr":   "#aaaaaa",
     "clients_off":   "#888888",
@@ -67,7 +67,7 @@ DARK: dict = {
     "curve_diff":       "#FF4040",           # разностный спектр
     "curve_live":       "#39FF14",           # Live-кривая
     "curve_live_fill":  (57, 255, 20, 22),   # заливка под Live (RGBA)
-    "curve_peak":       "#FF8C00",           # Peak Hold
+    "curve_peak":       "#FF8C00",           # удержание пика
     "curve_on_a":       "#FFC107",           # сессия A — ON
     "curve_on_b":       "#00BCD4",           # сессия B — ON
     "curve_diff_a":     "#FF5722",           # сессия A — Δ
@@ -92,7 +92,7 @@ DARK: dict = {
 
 LIGHT: dict = {
     "name": "light",
-    # Backgrounds
+    # Фоны
     "bg_window":      "#f0f0f0",
     "bg_widget":      "#ffffff",
     "bg_plot":        "#ffffff",
@@ -104,18 +104,18 @@ LIGHT: dict = {
     "bg_header":      "#e4e4e4",
     "bg_progress":    "#e0e0e0",
     "bg_instruction": "#f8f8f8",
-    # Borders / separators
+    # Границы и разделители
     "border":         "#cccccc",
     "border_input":   "#bbbbbb",
     "sep":            "#bbbbbb",
-    # Text
+    # Текст
     "text":           "#1a1a1a",
     "text_dim":       "#333333",
     "text_muted":     "#555555",
     "text_off":       "#999999",
     "text_axis":      "#222222",
     "text_axis_dim":  "#444444",
-    # Toolbar buttons
+    # Кнопки панели инструментов
     "btn_bg":           "#d8d8d8",
     "btn_hover":        "#c4c4c4",
     "btn_fg":           "#1a1a1a",
@@ -128,24 +128,24 @@ LIGHT: dict = {
     "btn_primary_bg":    "#3a6ea8",
     "btn_primary_hover": "#2a5280",
     "progress_chunk":    "#3a6ea8",
-    # Expert panel buttons
+    # Кнопки экспертной панели
     "expert_btn_bg":       "#e8e8e8",
     "expert_btn_fg":       "#1a1a1a",
     "expert_btn_bdr":      "#bbbbbb",
     "expert_btn_hover":    "#d4d4d4",
     "expert_btn_dis_bg":   "#f0f0f0",
     "expert_btn_dis_fg":   "#aaaaaa",
-    # Menu bar
+    # Строка меню
     "mb_bg":     "#e8e8e8",
     "mb_fg":     "#1a1a1a",
     "mb_sel":    "#d0d0d0",
     "menu_bg":   "#f0f0f0",
     "menu_sel":  "#dde8f0",
     "menu_bdr":  "#cccccc",
-    # pyqtgraph axes / legend
+    # Оси и легенда pyqtgraph
     "axis_pen":     "#aaaaaa",
     "legend_brush": (245, 245, 245, 210),
-    # Special labels
+    # Специальные метки
     "remote_title":  "#666666",
     "remote_addr":   "#666666",
     "clients_off":   "#777777",
