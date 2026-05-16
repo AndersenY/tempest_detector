@@ -116,10 +116,11 @@ class ExpertPanel(QGroupBox):
         )
 
     def _btn_active_qss(self) -> str:
+        t = self._theme
         return (
-            "QPushButton { background-color: #1565C0; color: white; border: none;"
-            " border-radius: 3px; padding: 4px 8px; font-size: 12px; font-weight: bold; }"
-            " QPushButton:hover { background-color: #1976D2; }"
+            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white; border: none;"
+            f" border-radius: 3px; padding: 4px 8px; font-size: 12px; font-weight: bold; }}"
+            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
         )
 
     def apply_theme(self, t: dict) -> None:
@@ -225,8 +226,8 @@ class ExpertPanel(QGroupBox):
 
         # ── Кнопки переизмерения ──────────────────────────────────────
         row1 = QHBoxLayout()
-        self._btn_essh = QPushButton("Переизм. сигнал")
-        self._btn_esh  = QPushButton("Переизм. шум")
+        self._btn_essh = QPushButton("Переизмерить сигнал")
+        self._btn_esh  = QPushButton("Переизмерить шум")
         self._btn_essh.setStyleSheet(self._btn_qss())
         self._btn_esh.setStyleSheet(self._btn_qss())
         self._btn_essh.setToolTip("Переизмерить уровень сигнала (устройство включено, N захватов)")
