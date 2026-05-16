@@ -25,9 +25,16 @@ class ZeroSpanWorker(QThread):
         self._ctrl    = ctrl
         self._cfg     = cfg        # исходный конфиг — восстанавливается после остановки
         self._freq_hz = freq_hz
-        self._stop    = False
+        self._stop           = False
+        self._restore_config = True
 
-    def stop(self) -> None:
+    def stop(self, restore_config: bool = True) -> None:
+        """
+        Остановить захват.
+        restore_config=False — не восстанавливать широкополосный конфиг в finally
+        (используется при полном сбросе, когда SDR всё равно будет закрыт).
+        """
+        self._restore_config = restore_config
         self._stop = True
 
     def run(self) -> None:
@@ -50,7 +57,8 @@ class ZeroSpanWorker(QThread):
             if not self._stop:
                 self.error.emit(str(e))
         finally:
-            try:
-                self._ctrl.configure(self._cfg)
-            except Exception:
-                pass
+            if self._restore_config:
+                try:
+                    self._ctrl.configure(self._cfg)
+                except Exception:
+                    pass

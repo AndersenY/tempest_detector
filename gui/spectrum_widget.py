@@ -7,7 +7,7 @@ from gui.theme import DARK, btn_normal, btn_toggle, btn_icon
 
 class SpectrumPlotWidget(QWidget):
 
-    _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц — совпадает с порогом дедупликации закладок
+    _MIN_MARK_SPACING_MHZ = 0.1   # 100 кГц
     freq_clicked      = pyqtSignal(float)   # МГц, клик в обычном режиме
     freq_mark_added   = pyqtSignal(float)   # МГц, добавлена метка в режиме меток
     fullscreen_toggled = pyqtSignal(bool)   # True = полный экран
@@ -39,7 +39,7 @@ class SpectrumPlotWidget(QWidget):
 
         t = self._theme
 
-        # Верхняя правая панель: сброс + маркеры + метка + курсор + fullscreen
+        # Верхняя правая панель: сброс + маркеры + метка + курсор + полный экран
         self.control_panel = QWidget(self.plot)
         self.control_panel.setStyleSheet(
             f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
@@ -221,7 +221,13 @@ class SpectrumPlotWidget(QWidget):
         anchor = (0, 1) if freq_mhz < (x0 + x1) / 2 else (1, 1)
         self._cursor_label.setAnchor(anchor)
         self._cursor_label.setPos(freq_mhz, best_amp)
-        self._cursor_label.setText(f" {freq_mhz:.3f} МГц\n {best_amp:.1f} дБ")
+        c = self._theme["text_axis"]
+        self._cursor_label.setHtml(
+            f'<span style="color:{c}; white-space:nowrap;">'
+            f"&nbsp;{freq_mhz:.3f}&nbsp;МГц<br>"
+            f"&nbsp;{best_amp:.1f}&nbsp;дБ&nbsp;"
+            f"</span>"
+        )
         self._cursor_label.setVisible(True)
 
     def _zoom_in(self):
@@ -484,7 +490,7 @@ class SpectrumPlotWidget(QWidget):
             self.signal_markers.append(line)
 
     def set_highlight(self, freq_mhz: float):
-        """Показывает пунктирный маркер с подписью частоты (напр. '97.000 МГц')."""
+        """Показывает пунктирный маркер с подписью частоты."""
         self._last_highlight_mhz = freq_mhz
         if not self._highlight_enabled:
             return

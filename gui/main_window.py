@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
         self._current_action_title: str = ""
         self._audio = AudioMonitor()
         self._zs_worker: ZeroSpanWorker | None = None
+        self._zs_freq_hz: float | None = None
         self._panorama_preview_worker: LiveWorker | None = None
         self._bookmark_freqs_hz: list[float] = []   # частоты (Гц), отмеченные в live
 
@@ -598,6 +599,10 @@ class MainWindow(QMainWindow):
         self.plot.freq_clicked.connect(self._on_graph_click)
         self.plot.freq_mark_added.connect(self._on_panorama_freq_marked)
         self.zero_span_widget = ZeroSpanWidget()
+        self.zero_span_widget.audio_toggled.connect(self._on_zs_audio_toggle)
+        self.zero_span_widget.pause_requested.connect(self._on_zs_pause)
+        self.zero_span_widget.resume_requested.connect(self._on_zs_resume)
+        self.zero_span_widget.fullscreen_toggled.connect(self._toggle_graph_fullscreen)
         self.live_widget = LiveWidget()
         self.live_widget.freq_marked.connect(self._on_live_freq_marked)
         self.live_widget.freq_selected.connect(self._on_live_graph_freq_clicked)
@@ -1019,7 +1024,7 @@ class MainWindow(QMainWindow):
         self._top_bar.setVisible(not fullscreen)
         self._bottom_widget.setVisible(not fullscreen)
         # Синхронизируем кнопку в обоих виджетах без повторного эмита
-        for w in (self.plot, self.live_widget):
+        for w in (self.plot, self.live_widget, self.zero_span_widget):
             w.btn_fullscreen.blockSignals(True)
             w.btn_fullscreen.setChecked(fullscreen)
             w.btn_fullscreen.blockSignals(False)
@@ -1099,7 +1104,9 @@ class MainWindow(QMainWindow):
         self._settle_timer.stop()
 
         self._stop_panorama_preview()
-        self._stop_zero_span()   # остановить до закрытия SDR, иначе librtlsdr крэшится
+        # restore_config=False: SDR всё равно будет закрыт, восстанавливать конфиг не нужно
+        # (попытка configure() во время reset вызывает ошибки USB -9/-6 в librtlsdr)
+        self._stop_zero_span(restore_config=False)
         if self.wf:
             self.wf.stop()
 
@@ -1123,6 +1130,11 @@ class MainWindow(QMainWindow):
             self._launch_measurement_from_preview()
             return
         else:
+            # Если ZeroSpan активен — освободить SDR до того, как workflow
+            # начнёт захват (два потока не могут использовать устройство одновременно).
+            if self._zs_worker is not None or self._spectrum_stack.currentIndex() == 1:
+                self._on_zero_span_stop()
+
             # Определяем нужно ли авто-переключение теста на этом шаге
             title = self._current_action_title
             if "ФОН ИЗМЕРЕН" in title:
@@ -1185,6 +1197,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _connect_and_start(self):
+        # ZeroSpan занимает SDR в узкой полосе — освободить до нового захвата.
+        # restore_config=False: SDR будет перенастроен для панорамы в этом же вызове.
+        if self._zs_worker is not None or self._spectrum_stack.currentIndex() == 1:
+            self._stop_zero_span(restore_config=False)
+            self._zs_freq_hz = None
+            self.zero_span_widget.set_running(True)
+            self._spectrum_stack.setCurrentIndex(0)
+            self.expert_panel.set_zero_span_active(False)
+
         if not self._apply_settings_to_cfg():
             return
         self.cfg.skip_verification = (self.scan_mode == "quick")
@@ -1693,22 +1714,46 @@ class MainWindow(QMainWindow):
 
     def _on_zero_span_start(self, freq_hz: float) -> None:
         self._stop_zero_span()
-        sig = self._signal_by_freq(freq_hz)
-        baseline = sig.amplitude_on_db if sig else -80.0
+        self._zs_freq_hz = freq_hz
         self.zero_span_widget.clear()
-        self.zero_span_widget.set_signal_info(freq_hz, baseline)
+        self.zero_span_widget.set_signal_info(freq_hz)
+        self.zero_span_widget.set_running(True)
         self._spectrum_stack.setCurrentIndex(1)
+        self._zs_start_worker(freq_hz)
+        self.expert_panel.enable_remeasure(False)
+
+    def _zs_start_worker(self, freq_hz: float) -> None:
         from copy import copy
         self._zs_worker = ZeroSpanWorker(self.ctrl, copy(self.cfg), freq_hz)
         self._zs_worker.amplitude_updated.connect(self.zero_span_widget.add_point)
         self._zs_worker.amplitude_updated.connect(self._audio.set_amplitude)
         self._zs_worker.error.connect(self._on_zero_span_error)
         self._zs_worker.start()
-        self._audio.start()
-        self.expert_panel.enable_remeasure(False)
+
+    def _on_zs_pause(self) -> None:
+        """Заморозить график: остановить воркер, остаться в zero span виде."""
+        if self._zs_worker is not None:
+            self._zs_worker.stop()
+            self._zs_worker.wait(5000)
+            self._zs_worker = None
+        self._audio.stop()
+
+    def _on_zs_resume(self) -> None:
+        """Возобновить захват с той же частотой."""
+        if self._zs_freq_hz is None or self._zs_worker is not None:
+            return
+        self._zs_start_worker(self._zs_freq_hz)
+
+    def _on_zs_audio_toggle(self, active: bool) -> None:
+        if active:
+            self._audio.start()
+        else:
+            self._audio.stop()
 
     def _on_zero_span_stop(self) -> None:
         self._stop_zero_span()
+        self._zs_freq_hz = None
+        self.zero_span_widget.set_running(True)   # сброс кнопок для следующего запуска
         self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.set_zero_span_active(False)
         if self.current_step in ("idle", "expert"):
@@ -1723,10 +1768,10 @@ class MainWindow(QMainWindow):
             self.expert_panel.set_zero_span_active(False)
             QMessageBox.warning(self, "Мониторинг частоты", f"Ошибка измерения:\n{msg}")
 
-    def _stop_zero_span(self) -> None:
+    def _stop_zero_span(self, restore_config: bool = True) -> None:
         if self._zs_worker is not None:
-            self._zs_worker.stop()
-            self._zs_worker.wait(5000)  # дождаться finally-блока (restore configure)
+            self._zs_worker.stop(restore_config=restore_config)
+            self._zs_worker.wait(5000)
             self._zs_worker = None
         self._audio.stop()
 
@@ -2022,7 +2067,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._reset_progress()
-        self._stop_zero_span()
+        self._stop_zero_span(restore_config=False)
         self.live_widget.clear()
         self.live_widget.highlight_mark(None)
         self._spectrum_stack.setCurrentIndex(0)

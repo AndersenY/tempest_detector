@@ -609,7 +609,13 @@ class LiveWidget(QWidget):
         anchor = (0, 1) if freq_mhz < (x0 + x1) / 2 else (1, 1)
         self._cursor_label.setAnchor(anchor)
         self._cursor_label.setPos(freq_mhz, amp_db)
-        self._cursor_label.setText(f" {freq_mhz:.3f} МГц\n {amp_db:.1f} дБ")
+        c = self._theme["text_axis"]
+        self._cursor_label.setHtml(
+            f'<span style="color:{c}; white-space:nowrap;">'
+            f"&nbsp;{freq_mhz:.3f}&nbsp;МГц<br>"
+            f"&nbsp;{amp_db:.1f}&nbsp;дБ&nbsp;"
+            f"</span>"
+        )
         self._cursor_label.setVisible(True)
 
     def _on_marks_visibility_toggle(self, checked: bool) -> None:
