@@ -3,6 +3,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 import pyqtgraph as pg
 import numpy as np
 from gui.theme import DARK, btn_normal, btn_toggle, btn_icon
+from gui.icons import make_icon, RESET_VIEW, MARKERS, ADD_MARKER, CLEAR_MARKERS, CURSOR, FULLSCREEN
 
 
 class SpectrumPlotWidget(QWidget):
@@ -48,7 +49,7 @@ class SpectrumPlotWidget(QWidget):
         panel_layout.setContentsMargins(5, 5, 5, 5)
         panel_layout.setSpacing(4)
 
-        self.btn_auto_scale = QPushButton("⟲ Сброс")
+        self.btn_auto_scale = QPushButton("Сброс")
         self.btn_auto_scale.setToolTip("Сбросить масштаб на графике")
         self.btn_auto_scale.setStyleSheet(btn_normal(t))
         self.btn_auto_scale.clicked.connect(self.reset_zoom)
@@ -60,20 +61,20 @@ class SpectrumPlotWidget(QWidget):
         self.btn_markers.setStyleSheet(btn_toggle(t))
         self.btn_markers.toggled.connect(self._on_marker_toggle)
 
-        self.btn_mark_mode = QPushButton("⊞ Метка")
+        self.btn_mark_mode = QPushButton("Метка")
         self.btn_mark_mode.setCheckable(True)
         self.btn_mark_mode.setToolTip("Режим добавления меток: кликните на спектр для отметки частоты")
         self.btn_mark_mode.setStyleSheet(btn_toggle(t))
         self.btn_mark_mode.toggled.connect(self._on_mark_mode_toggle)
         self.btn_mark_mode.setVisible(False)   # скрыты по умолчанию — только в экспертном режиме
 
-        self.btn_clear_marks = QPushButton("✕ Метки")
+        self.btn_clear_marks = QPushButton("Метки")
         self.btn_clear_marks.setToolTip("Удалить все пользовательские метки")
         self.btn_clear_marks.setStyleSheet(btn_normal(t))
         self.btn_clear_marks.clicked.connect(self._confirm_and_clear_marks)
         self.btn_clear_marks.setVisible(False)  # скрыты по умолчанию — только в экспертном режиме
 
-        self.btn_cursor = QPushButton("⊕ Курсор")
+        self.btn_cursor = QPushButton("Курсор")
         self.btn_cursor.setCheckable(True)
         self.btn_cursor.setChecked(True)
         self.btn_cursor.setToolTip("Показывать частоту и уровень при наведении мыши")
@@ -86,7 +87,7 @@ class SpectrumPlotWidget(QWidget):
         self._sep.setStyleSheet(f"color: {t['sep']};")
         self._sep.setFixedWidth(1)
 
-        self.btn_fullscreen = QPushButton("⛶")
+        self.btn_fullscreen = QPushButton()
         self.btn_fullscreen.setCheckable(True)
         self.btn_fullscreen.setFixedSize(28, 28)
         self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
@@ -247,7 +248,7 @@ class SpectrumPlotWidget(QWidget):
     def _reposition_panels(self):
         self.control_panel.adjustSize()
         panel_w = self.control_panel.width()
-        self.control_panel.move(self.width() - panel_w - 10, 10)
+        self.control_panel.move(self.width() - panel_w - 10, 42)
         self.zoom_panel.adjustSize()
         zoom_w = self.zoom_panel.width()
         zoom_h = self.zoom_panel.height()
@@ -316,6 +317,13 @@ class SpectrumPlotWidget(QWidget):
         self.btn_zoom_in.setStyleSheet(btn_icon(t))
         self.btn_zoom_out.setStyleSheet(btn_icon(t))
         self._sep.setStyleSheet(f"color: {t['sep']};")
+        _c = t["btn_fg"]
+        self.btn_auto_scale.setIcon(make_icon(RESET_VIEW, _c, 14))
+        self.btn_markers.setIcon(make_icon(MARKERS, _c, 14))
+        self.btn_mark_mode.setIcon(make_icon(ADD_MARKER, _c, 14))
+        self.btn_clear_marks.setIcon(make_icon(CLEAR_MARKERS, _c, 14))
+        self.btn_cursor.setIcon(make_icon(CURSOR, _c, 14))
+        self.btn_fullscreen.setIcon(make_icon(FULLSCREEN, _c, 14))
         cursor_pen = pg.mkPen(t["text_muted"], width=1, style=Qt.PenStyle.DotLine)
         if self._cursor_vline is not None:
             self._cursor_vline.setPen(cursor_pen)

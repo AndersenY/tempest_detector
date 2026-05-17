@@ -26,6 +26,10 @@ from gui.expert_panel import ExpertPanel
 from gui.zero_span_widget import ZeroSpanWidget
 from gui.live_widget import LiveWidget
 from gui.theme import DARK, LIGHT, btn_primary, btn_danger
+from gui.icons import (make_icon, make_pixmap,
+                       ANTENNA, SUN, MOON,
+                       TARGET, REFRESH, BOOKMARK,
+                       STOP_SQUARE, PLAY, PAUSE)
 from core.live_worker import LiveWorker
 
 
@@ -209,9 +213,10 @@ class MainWindow(QMainWindow):
         _logo_icon.setFixedSize(22, 22)
         _lic = QHBoxLayout(_logo_icon)
         _lic.setContentsMargins(0, 0, 0, 0)
-        _lic_lbl = QLabel("◉")
+        _lic_lbl = QLabel()
         _lic_lbl.setObjectName("AppLogoGlyph")
         _lic_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._logo_lbl = _lic_lbl   # сохранить для перерисовки при смене темы
         _lic.addWidget(_lic_lbl)
         lay.addWidget(_logo_icon)
         lay.addSpacing(8)
@@ -261,7 +266,7 @@ class MainWindow(QMainWindow):
         lay.addSpacing(8)
 
         # Кнопка смены темы
-        self._btn_theme_toggle = QPushButton("◑")
+        self._btn_theme_toggle = QPushButton()
         self._btn_theme_toggle.setObjectName("AppIconBtn")
         self._btn_theme_toggle.setFixedSize(28, 28)
         self._btn_theme_toggle.setToolTip("Переключить тему")
@@ -621,6 +626,8 @@ class MainWindow(QMainWindow):
 
         # Кнопка СБРОС — через единый helper
         self.btn_stop.setStyleSheet(btn_danger(t, large=True))
+        self.btn_stop.setIcon(make_icon(STOP_SQUARE, "#ffffff", 14))
+        self.btn_action.setIcon(make_icon(PLAY, "#ffffff", 14))
 
         # Таблица результатов
         self.table.setStyleSheet(
@@ -635,8 +642,14 @@ class MainWindow(QMainWindow):
         )
         self.table.verticalHeader().setDefaultSectionSize(32)
 
-        # Action bar: иконка + статус (стили задаются через глобальный QSS #objectName)
-        self._lbl_status_icon.setStyleSheet("")
+        # Action bar: иконка + статус
+        _act_color = t["btn_active"]
+        _th_color  = t["text_dim"]
+        self._lbl_status_icon.setPixmap(make_pixmap(TARGET, _act_color, 18))
+        self._logo_lbl.setPixmap(make_pixmap(ANTENNA, "#ffffff", 14))
+        self._btn_theme_toggle.setIcon(
+            make_icon(SUN if t["name"] == "dark" else MOON, _th_color, 16)
+        )
         self._lbl_status_title.setStyleSheet("")
         self.lbl_instruction.setStyleSheet("")
 
@@ -744,7 +757,7 @@ class MainWindow(QMainWindow):
         action_row.setSpacing(12)
 
         # Иконка состояния — 32×32 px, фон bg_input через #StatusIcon QSS
-        self._lbl_status_icon = QLabel("◎")
+        self._lbl_status_icon = QLabel()
         self._lbl_status_icon.setObjectName("StatusIcon")
         self._lbl_status_icon.setFixedSize(32, 32)
         self._lbl_status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -965,9 +978,12 @@ class MainWindow(QMainWindow):
     # Хелпер обновления статуса в action bar
     # ------------------------------------------------------------------
 
-    def _set_status(self, title: str, text: str, icon: str = "◎") -> None:
+    def _set_status(self, title: str, text: str, icon: str = "target") -> None:
         """Устанавливает иконку, заголовок фазы и текст описания в action bar."""
-        self._lbl_status_icon.setText(icon)
+        _icon_map = {"target": TARGET, "refresh": REFRESH, "bookmark": BOOKMARK}
+        _svg = _icon_map.get(icon, TARGET)
+        _color = self._theme.get("btn_active", "#4fb3a0")
+        self._lbl_status_icon.setPixmap(make_pixmap(_svg, _color, 18))
         self._lbl_status_title.setText(title.upper() if title else "")
         self.lbl_instruction.setText(text)
 
@@ -1746,6 +1762,8 @@ class MainWindow(QMainWindow):
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.enable_remeasure(False)
         self.expert_panel.enable_expert_mode(False)
+        # Кнопки меток — сразу применяем текущее состояние экспертного режима
+        self.live_widget.set_mark_available(self.act_expert_mode.isChecked())
 
         from copy import copy as _cp
         prev_cfg = _cp(self.cfg)
@@ -1790,7 +1808,7 @@ class MainWindow(QMainWindow):
         self._set_status(
             "Прямой эфир",
             "Параметры можно менять в реальном времени. Поставьте метки, затем нажмите «Запустить».",
-            icon="↻",
+            icon="refresh",
         )
 
     def _stop_panorama_preview(self) -> None:
@@ -1845,7 +1863,7 @@ class MainWindow(QMainWindow):
     def _start_workflow(self):
         self.current_step = "running"
         self._set_settings_enabled(False)
-        self._set_status("Запуск", "Инициализация измерения...", icon="↻")
+        self._set_status("Запуск", "Инициализация измерения...", icon="refresh")
         self.btn_action.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.act_save.setEnabled(False)
@@ -2426,7 +2444,7 @@ class MainWindow(QMainWindow):
         self._set_status(
             "Измерение завершено",
             f"Обнаружено {n} сигнал{'ов' if n == 0 or n >= 5 else 'а' if n > 1 else ''}. Выберите строку для анализа.",
-            icon="◎",
+            icon="bookmark",
         )
         if self.act_expert_mode.isChecked():
             self.current_step = "expert"
@@ -2572,9 +2590,20 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed(self, _: int) -> None:
         mode = self._control_mode
+        if mode != "manual" and self._remote_server.client_count == 0:
+            QMessageBox.warning(
+                self,
+                "Нет подключённых клиентов",
+                "Для работы в режиме «Полуавтоматический» или «Автоматический» "
+                "необходимо хотя бы одно подключённое удалённое устройство.\n\n"
+                "Подключите клиент и повторите выбор режима.",
+            )
+            self._combo_mode.blockSignals(True)
+            self._combo_mode.setCurrentIndex(0)   # откат на «Ручной»
+            self._combo_mode.blockSignals(False)
+            mode = "manual"
         enabled = (mode != "manual")
         self._spin_settle.setEnabled(enabled)
-        self._lbl_settle.setEnabled(enabled)
         self._remote_server.set_mode(mode)
 
     def _on_remote_client_count(self, count: int) -> None:

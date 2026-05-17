@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLa
                               QMessageBox)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from gui.theme import DARK, btn_normal, btn_toggle, btn_icon, btn_danger
+from gui.icons import make_icon, RESET_VIEW, MARKERS, ADD_MARKER, CLEAR_MARKERS, CURSOR, FULLSCREEN, STOP_SQUARE, PLAY
 
 
 class LiveWidget(QWidget):
@@ -162,7 +163,7 @@ class LiveWidget(QWidget):
         cp.setContentsMargins(5, 5, 5, 5)
         cp.setSpacing(4)
 
-        self.btn_auto_scale = QPushButton("⟲ Сброс")
+        self.btn_auto_scale = QPushButton("Сброс")
         self.btn_auto_scale.setStyleSheet(btn_normal(t))
         self.btn_auto_scale.setToolTip("Сбросить масштаб")
         self.btn_auto_scale.clicked.connect(self.reset_view)
@@ -174,7 +175,7 @@ class LiveWidget(QWidget):
         self.btn_peak.setStyleSheet(btn_toggle(t))
         self.btn_peak.toggled.connect(self._on_peak_toggle)
 
-        self.btn_reset_peak = QPushButton("⟲ Peak")
+        self.btn_reset_peak = QPushButton("Сброс пика")
         self.btn_reset_peak.setStyleSheet(btn_normal(t))
         self.btn_reset_peak.clicked.connect(self.clear_peak)
 
@@ -185,17 +186,17 @@ class LiveWidget(QWidget):
         self.btn_markers.setToolTip("Показать/скрыть все метки на графике")
         self.btn_markers.toggled.connect(self._on_marks_visibility_toggle)
 
-        self.btn_mark = QPushButton("⊞ Метка")
+        self.btn_mark = QPushButton("Метка")
         self.btn_mark.setCheckable(True)
         self.btn_mark.setStyleSheet(btn_toggle(t))
         self.btn_mark.setToolTip("Режим добавления меток: кликните на спектр для отметки частоты")
 
-        self.btn_clear_marks = QPushButton("✕ Метки")
+        self.btn_clear_marks = QPushButton("Метки")
         self.btn_clear_marks.setStyleSheet(btn_normal(t))
         self.btn_clear_marks.setToolTip("Удалить все метки")
         self.btn_clear_marks.clicked.connect(self._on_clear_marks_clicked)
 
-        self.btn_cursor = QPushButton("⊕ Курсор")
+        self.btn_cursor = QPushButton("Курсор")
         self.btn_cursor.setCheckable(True)
         self.btn_cursor.setChecked(True)
         self.btn_cursor.setToolTip("Показывать частоту и уровень при наведении мыши")
@@ -204,19 +205,19 @@ class LiveWidget(QWidget):
 
         self._sep_cp = self._make_separator()
 
-        self.btn_fullscreen = QPushButton("⛶")
+        self.btn_fullscreen = QPushButton()
         self.btn_fullscreen.setCheckable(True)
         self.btn_fullscreen.setFixedSize(28, 28)
         self.btn_fullscreen.setToolTip("На весь экран / Свернуть")
         self.btn_fullscreen.setStyleSheet(btn_icon(t, checkable=True))
         self.btn_fullscreen.toggled.connect(self.fullscreen_toggled)
 
-        self.btn_stop_live = QPushButton("■")
+        self.btn_stop_live = QPushButton()
         self.btn_stop_live.setFixedSize(28, 28)
         self.btn_stop_live.setToolTip("Остановить прямой эфир")
         self.btn_stop_live.clicked.connect(self.stop_requested)
 
-        self.btn_resume_live = QPushButton("▶")
+        self.btn_resume_live = QPushButton()
         self.btn_resume_live.setFixedSize(28, 28)
         self.btn_resume_live.setToolTip("Возобновить прямой эфир")
         self.btn_resume_live.setStyleSheet(btn_icon(t))
@@ -266,7 +267,7 @@ class LiveWidget(QWidget):
     def _reposition_panels(self) -> None:
         self.control_panel.adjustSize()
         pw = self.control_panel.width()
-        self.control_panel.move(self.width() - pw - 10, 10)
+        self.control_panel.move(self.width() - pw - 10, 42)
         self.zoom_panel.adjustSize()
         zw = self.zoom_panel.width()
         zh = self.zoom_panel.height()
@@ -371,6 +372,15 @@ class LiveWidget(QWidget):
         )
         self.btn_resume_live.setStyleSheet(btn_icon(t))
         self._sep_cp.setStyleSheet(f"color: {t['sep']};")
+        _c  = t["btn_fg"]
+        self.btn_auto_scale.setIcon(make_icon(RESET_VIEW, _c, 14))
+        self.btn_markers.setIcon(make_icon(MARKERS, _c, 14))
+        self.btn_mark.setIcon(make_icon(ADD_MARKER, _c, 14))
+        self.btn_clear_marks.setIcon(make_icon(CLEAR_MARKERS, _c, 14))
+        self.btn_cursor.setIcon(make_icon(CURSOR, _c, 14))
+        self.btn_fullscreen.setIcon(make_icon(FULLSCREEN, _c, 14))
+        self.btn_stop_live.setIcon(make_icon(STOP_SQUARE, "#ffffff", 14))
+        self.btn_resume_live.setIcon(make_icon(PLAY, _c, 14))
         self.zoom_panel.setStyleSheet(
             f"QWidget {{ background-color: {t['bg_panel']}; border-radius: 4px; }}"
         )
