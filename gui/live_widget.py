@@ -214,7 +214,6 @@ class LiveWidget(QWidget):
         self.btn_stop_live = QPushButton("■")
         self.btn_stop_live.setFixedSize(28, 28)
         self.btn_stop_live.setToolTip("Остановить прямой эфир")
-        self.btn_stop_live.setStyleSheet(btn_danger(t))
         self.btn_stop_live.clicked.connect(self.stop_requested)
 
         self.btn_resume_live = QPushButton("▶")
@@ -365,7 +364,11 @@ class LiveWidget(QWidget):
         self.btn_clear_marks.setStyleSheet(btn_normal(t))
         self.btn_cursor.setStyleSheet(btn_toggle(t))
         self.btn_fullscreen.setStyleSheet(btn_icon(t, checkable=True))
-        self.btn_stop_live.setStyleSheet(btn_danger(t))
+        self.btn_stop_live.setStyleSheet(
+            f"QPushButton {{ background: {t['btn_danger']}; color: white;"
+            f" border: none; border-radius: 4px; font-size: 13px; padding: 2px; }}"
+            f" QPushButton:hover {{ background: {t['btn_danger_hover']}; }}"
+        )
         self.btn_resume_live.setStyleSheet(btn_icon(t))
         self._sep_cp.setStyleSheet(f"color: {t['sep']};")
         self.zoom_panel.setStyleSheet(
