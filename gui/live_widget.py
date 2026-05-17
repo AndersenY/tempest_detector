@@ -1,11 +1,11 @@
 import time
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
-                              QMessageBox)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from gui.theme import DARK, btn_normal, btn_toggle, btn_icon, btn_danger
 from gui.icons import make_icon, RESET_VIEW, MARKERS, ADD_MARKER, CLEAR_MARKERS, CURSOR, FULLSCREEN, STOP_SQUARE, PLAY
+from gui import dialogs as _dlg
 
 
 class LiveWidget(QWidget):
@@ -641,13 +641,7 @@ class LiveWidget(QWidget):
     def _on_clear_marks_clicked(self) -> None:
         if not self.marked_freqs_mhz:
             return
-        reply = QMessageBox.question(
-            self, "Удаление меток",
-            "Удалить все пользовательские метки?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+        if _dlg.question(self, "Удаление меток", "Удалить все пользовательские метки?"):
             self.clear_marks()
             self.marks_cleared.emit()
 

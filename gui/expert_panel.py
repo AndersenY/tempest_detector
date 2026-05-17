@@ -18,7 +18,7 @@
 import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QInputDialog, QMessageBox, QProgressBar, QFrame,
+    QProgressBar, QFrame,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -26,6 +26,7 @@ from core.backends import BaseInstrument
 from core.models import PEMINSignal
 from core.signal_processor import find_peak_in_window
 from gui.theme import DARK
+from gui import dialogs as _dlg
 
 
 # ---------------------------------------------------------------------------
@@ -441,14 +442,14 @@ class ExpertPanel(QWidget):
             btn.setEnabled(True)
 
     def _on_remeasure_error(self, msg: str) -> None:
-        QMessageBox.warning(self, "Ошибка переизмерения", msg)
+        _dlg.warning(self, "Ошибка переизмерения", msg)
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
             btn.setEnabled(True)
 
     def _set_manual_amplitude(self) -> None:
         if self._signal is None:
             return
-        val, ok = QInputDialog.getDouble(
+        val, ok = _dlg.get_double(
             self, "Задать уровень сигнала",
             "Введите уровень сигнала в дБ:",
             self._signal.amplitude_on_db,

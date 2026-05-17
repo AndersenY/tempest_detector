@@ -1,9 +1,10 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame, QMessageBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame
 from PyQt6.QtCore import Qt, pyqtSignal
 import pyqtgraph as pg
 import numpy as np
 from gui.theme import DARK, btn_normal, btn_toggle, btn_icon
 from gui.icons import make_icon, RESET_VIEW, MARKERS, ADD_MARKER, CLEAR_MARKERS, CURSOR, FULLSCREEN
+from gui import dialogs as _dlg
 
 
 class SpectrumPlotWidget(QWidget):
@@ -390,13 +391,7 @@ class SpectrumPlotWidget(QWidget):
     def _confirm_and_clear_marks(self) -> None:
         if not self._panorama_marks:
             return
-        reply = QMessageBox.question(
-            self, "Удаление меток",
-            "Удалить все пользовательские метки?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+        if _dlg.question(self, "Удаление меток", "Удалить все пользовательские метки?"):
             self.clear_panorama_marks()
 
     def _on_mark_mode_toggle(self, checked: bool) -> None:

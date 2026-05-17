@@ -7,7 +7,7 @@ import pyqtgraph as pg
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
-                             QProgressBar, QMessageBox, QGroupBox, QHeaderView,
+                             QProgressBar, QGroupBox, QHeaderView,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
                              QCheckBox, QStackedWidget, QComboBox, QTabWidget,
                              QStyledItemDelegate, QAbstractItemDelegate, QFrame, QMenu,
@@ -30,6 +30,7 @@ from gui.icons import (make_icon, make_pixmap,
                        ANTENNA, SUN, MOON,
                        TARGET, REFRESH, BOOKMARK,
                        STOP_SQUARE, PLAY, PAUSE)
+from gui import dialogs as _dlg
 from core.live_worker import LiveWorker
 
 
@@ -1192,8 +1193,8 @@ class MainWindow(QMainWindow):
         start = self.spin_start_freq.value() * 1e6
         stop  = self.spin_stop_freq.value() * 1e6
         if stop <= start:
-            QMessageBox.warning(self, "Ошибка параметров",
-                                "Конечная частота должна быть больше начальной.")
+            _dlg.warning(self, "Ошибка параметров",
+                         "Конечная частота должна быть больше начальной.")
             return False
 
         self.cfg.start_freq_hz   = start
@@ -1215,7 +1216,7 @@ class MainWindow(QMainWindow):
 
     def _save_report(self):
         if self.table.rowCount() == 0:
-            QMessageBox.warning(self, "Внимание", "Нет данных для сохранения.")
+            _dlg.warning(self, "Внимание", "Нет данных для сохранения.")
             return
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1239,13 +1240,13 @@ class MainWindow(QMainWindow):
                             item = self.table.item(row, col)
                             row_data.append(item.text() if item else "")
                         writer.writerow(row_data)
-                QMessageBox.information(self, "Успех", f"Отчет сохранен:\n{file_path}")
+                _dlg.information(self, "Успех", f"Отчет сохранен:\n{file_path}")
             except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+                _dlg.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
 
     def _export_spectrum(self):
         if self._last_on is None:
-            QMessageBox.warning(self, "Внимание", "Нет данных спектра для экспорта.")
+            _dlg.warning(self, "Внимание", "Нет данных спектра для экспорта.")
             return
 
         import numpy as np
@@ -1294,18 +1295,20 @@ class MainWindow(QMainWindow):
                 cfg_rbw_hz=np.float64(self._last_on.rbw_hz),
                 timestamp=np.float64(self._last_on.timestamp),
             )
-            QMessageBox.information(self, "Успех", f"Спектр сохранён:\n{file_path}")
+            _dlg.information(self, "Успех", f"Спектр сохранён:\n{file_path}")
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+            _dlg.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
 
     # ------------------------------------------------------------------
     # Полноэкранный режим графика
     # ------------------------------------------------------------------
 
     def _toggle_graph_fullscreen(self, fullscreen: bool) -> None:
-        self._action_bar.setVisible(not fullscreen)
-        self._settings_panel.setVisible(not fullscreen)
-        self._sidebar.setVisible(not fullscreen)
+        visible = not fullscreen
+        self._app_bar.setVisible(visible)
+        self._action_bar.setVisible(visible)
+        self._settings_panel.setVisible(visible)
+        self._sidebar_frame.setVisible(visible)
         # Синхронизируем кнопку в обоих виджетах без повторного эмита
         for w in (self.plot, self.live_widget, self.zero_span_widget):
             w.btn_fullscreen.blockSignals(True)
@@ -1371,14 +1374,14 @@ class MainWindow(QMainWindow):
             self.ctrl.abandon_handle()
         self._reset_to_start()
         if self._is_device_lost(msg):
-            QMessageBox.warning(
+            _dlg.warning(
                 self,
                 "Устройство отключено",
                 "RTL-SDR донгл был отключён во время работы.\n\n"
                 "Подключите устройство заново и нажмите Пуск.",
             )
         else:
-            QMessageBox.critical(self, "Ошибка измерения", msg)
+            _dlg.critical(self, "Ошибка измерения", msg)
 
     def _reset_to_start(self):
         """Прерывает текущий процесс и возвращает программу в начальное состояние."""
@@ -1534,7 +1537,7 @@ class MainWindow(QMainWindow):
                 self.ctrl.configure(self.cfg)
             self._start_panorama_preview()
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка подключения", str(e))
+            _dlg.critical(self, "Ошибка подключения", str(e))
 
     def _on_preview_settings_changed(self) -> None:
         """Обновляет live preview при изменении любого параметра во время предпросмотра."""
@@ -2058,7 +2061,7 @@ class MainWindow(QMainWindow):
         else:
             self._spectrum_stack.setCurrentIndex(0)
             self.expert_panel.set_zero_span_active(False)
-            QMessageBox.warning(self, "Мониторинг частоты", f"Ошибка измерения:\n{msg}")
+            _dlg.warning(self, "Мониторинг частоты", f"Ошибка измерения:\n{msg}")
 
     def _stop_zero_span(self, restore_config: bool = True) -> None:
         if self._zs_worker is not None:
@@ -2166,7 +2169,7 @@ class MainWindow(QMainWindow):
         try:
             return np.load(path, allow_pickle=True)
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть файл:\n{e}")
+            _dlg.critical(self, "Ошибка", f"Не удалось открыть файл:\n{e}")
             return None
 
     @staticmethod
@@ -2570,13 +2573,8 @@ class MainWindow(QMainWindow):
         if row < 0 or row >= len(self.wf.signals):
             return
         sig = self.wf.signals[row]
-        reply = QMessageBox.question(
-            self, "Удалить сигнал",
-            f"Удалить {sig.frequency_hz / 1e6:.4f} МГц из таблицы?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+        if _dlg.question(self, "Удалить сигнал",
+                         f"Удалить {sig.frequency_hz / 1e6:.4f} МГц из таблицы?"):
             self._delete_signal(row)
 
     # ------------------------------------------------------------------
@@ -2591,7 +2589,7 @@ class MainWindow(QMainWindow):
     def _on_mode_changed(self, _: int) -> None:
         mode = self._control_mode
         if mode != "manual" and self._remote_server.client_count == 0:
-            QMessageBox.warning(
+            _dlg.warning(
                 self,
                 "Нет подключённых клиентов",
                 "Для работы в режиме «Полуавтоматический» или «Автоматический» "
