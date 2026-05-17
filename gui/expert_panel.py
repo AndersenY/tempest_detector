@@ -1,18 +1,35 @@
+"""
+Компактная экспертная панель (фаза 4 редизайна).
+
+Сохраняет публичный API оригинала:
+  - сигналы: signal_modified, zero_span_started, zero_span_stopped, delete_requested
+  - методы:  set_signal, clear_signal, set_instrument, enable_remeasure,
+             enable_expert_mode, set_threshold, set_zero_span_active, apply_theme
+
+Визуальные изменения:
+  • Карточка «выбранный сигнал» сверху — большая частота + статус-чип
+  • Блок readout: Сигнал / Шум / Δ в три колонки
+  • Кнопки переизмерения: 3 в ряд (Сигнал, Шум, Частоту)
+  • «Вручную» отдельной строкой
+  • Zero Span + аудио одной кнопкой
+  • Удалить — внизу, только в экспертном режиме
+"""
+
 import numpy as np
 from PyQt6.QtWidgets import (
-    QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QInputDialog, QMessageBox, QProgressBar,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+    QInputDialog, QMessageBox, QProgressBar, QFrame,
 )
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from core.backends import BaseInstrument
 from core.models import PEMINSignal
 from core.signal_processor import find_peak_in_window
-from gui.theme import DARK, btn_danger
+from gui.theme import DARK
 
 
 # ---------------------------------------------------------------------------
-# Фоновый поток для переизмерений (не блокирует GUI)
+# Фоновый поток переизмерения (без изменений из оригинала).
 # ---------------------------------------------------------------------------
 
 class _RemeasureWorker(QThread):
@@ -32,46 +49,38 @@ class _RemeasureWorker(QThread):
             window_hz = max(self._sig.rbw_hz * 20, 50_000)
             best_amp  = -np.inf
             best_freq = self._sig.frequency_hz
-
             for _ in range(self._n):
                 spec  = self._ctrl.capture_spectrum()
                 f, a  = find_peak_in_window(spec, self._sig.frequency_hz, window_hz)
                 if a > best_amp:
                     best_amp  = a
                     best_freq = f
-
             self.done.emit(best_freq, best_amp)
         except Exception as exc:
             self.error.emit(str(exc))
 
 
 # ---------------------------------------------------------------------------
-# ExpertPanel — виджет экспертного анализа одного сигнала
+# ExpertPanel — компактная версия.
 # ---------------------------------------------------------------------------
 
-class ExpertPanel(QGroupBox):
+class ExpertPanel(QWidget):
     """
-    Панель экспертного режима (п. 3.1 ТЗ).
+    Компактная панель экспертного анализа.
 
-    Показывает детали выбранного ПЭМИН-сигнала и позволяет:
-      • Переизмерить E(с+ш) / E(ш) — n захватов, берётся максимум.
-      • Переизмерить частоту точнее (максимум из 5 точек в окне ±10·RBW).
-      • Задать амплитуду вручную.
-      • Включить / выключить аудиомонитор (тон ∝ уровню).
-
-    Сигнал `signal_modified(idx)` испускается после каждого изменения,
-    чтобы MainWindow мог перерисовать таблицу и маркеры.
+    Сохраняет публичный API исходного ExpertPanel — снаружи поведение
+    идентичное, изменилась только раскладка.
     """
 
-    signal_modified   = pyqtSignal(int)    # индекс изменённого сигнала
-    zero_span_started = pyqtSignal(float)  # freq_hz — запрос на старт Zero Span
-    zero_span_stopped = pyqtSignal()       # запрос на остановку Zero Span
-    delete_requested  = pyqtSignal()       # удалить выбранный сигнал (экспертный режим)
+    # ── Public signals ────────────────────────────────────────────────
+    signal_modified   = pyqtSignal(int)
+    zero_span_started = pyqtSignal(float)
+    zero_span_stopped = pyqtSignal()
+    delete_requested  = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
-        super().__init__("Экспертный анализ", parent)
+        super().__init__(parent)
         self._theme = DARK
-        self.setStyleSheet(self._groupbox_qss(DARK))
 
         self._signal: PEMINSignal | None = None
         self._signal_idx: int = -1
@@ -82,67 +91,213 @@ class ExpertPanel(QGroupBox):
 
         self._init_ui()
         self._update_display()
+        self.apply_theme(self._theme)
 
-    # ------------------------------------------------------------------
-    # Тема оформления
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # UI
+    # ==================================================================
 
-    @staticmethod
-    def _groupbox_qss(t: dict) -> str:
-        return (
-            f"QGroupBox {{ font-weight: bold; border: 1px solid {t['border_input']};"
-            f" border-radius: 5px; margin-top: 10px; padding-top: 8px; color: {t['text']}; }}"
-            f" QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}"
-            f" QLabel {{ color: {t['text_dim']}; font-size: 12px; }}"
+    def _init_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+        root.setContentsMargins(10, 10, 10, 10)
+
+        # ── Карточка выбранного сигнала ───────────────────────────────
+        self._signal_card = QFrame()
+        self._signal_card.setObjectName("ExpertSignalCard")
+        card_layout = QHBoxLayout(self._signal_card)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(8)
+
+        card_text = QVBoxLayout()
+        card_text.setSpacing(2)
+        card_text.setContentsMargins(0, 0, 0, 0)
+
+        self._lbl_freq = QLabel("—")
+        self._lbl_freq.setObjectName("ExpertFreq")
+        self._lbl_caption = QLabel("выберите сигнал в Результатах")
+        self._lbl_caption.setObjectName("ExpertCaption")
+
+        card_text.addWidget(self._lbl_freq)
+        card_text.addWidget(self._lbl_caption)
+        card_layout.addLayout(card_text, 1)
+
+        self._lbl_status = QLabel("")
+        self._lbl_status.setObjectName("ExpertStatusChip")
+        self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_status.setMinimumWidth(72)
+        card_layout.addWidget(self._lbl_status, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        root.addWidget(self._signal_card)
+
+        # ── Readout: Сигнал / Шум / Δ в три колонки ──────────────────
+        self._readout = QFrame()
+        self._readout.setObjectName("ExpertReadout")
+        readout_grid = QGridLayout(self._readout)
+        readout_grid.setContentsMargins(10, 8, 10, 8)
+        readout_grid.setHorizontalSpacing(12)
+        readout_grid.setVerticalSpacing(2)
+
+        self._lbl_sig_k = QLabel("СИГНАЛ"); self._lbl_sig_k.setObjectName("ReadoutKey")
+        self._lbl_sh_k  = QLabel("ШУМ");    self._lbl_sh_k.setObjectName("ReadoutKey")
+        self._lbl_d_k   = QLabel("Δ ДБ");   self._lbl_d_k.setObjectName("ReadoutKey")
+
+        self._lbl_sig_v = QLabel("—"); self._lbl_sig_v.setObjectName("ReadoutVal")
+        self._lbl_sh_v  = QLabel("—"); self._lbl_sh_v.setObjectName("ReadoutVal")
+        self._lbl_d_v   = QLabel("—"); self._lbl_d_v.setObjectName("ReadoutVal")
+
+        readout_grid.addWidget(self._lbl_sig_k, 0, 0)
+        readout_grid.addWidget(self._lbl_sh_k,  0, 1)
+        readout_grid.addWidget(self._lbl_d_k,   0, 2)
+        readout_grid.addWidget(self._lbl_sig_v, 1, 0)
+        readout_grid.addWidget(self._lbl_sh_v,  1, 1)
+        readout_grid.addWidget(self._lbl_d_v,   1, 2)
+        root.addWidget(self._readout)
+
+        # ── Подсказка экспертного режима ──────────────────────────────
+        self._lbl_hint = QLabel("")
+        self._lbl_hint.setWordWrap(True)
+        self._lbl_hint.setObjectName("ExpertHint")
+        root.addWidget(self._lbl_hint)
+
+        # ── Прогресс переизмерения ────────────────────────────────────
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.setVisible(False)
+        self._progress.setFixedHeight(4)
+        self._progress.setTextVisible(False)
+        root.addWidget(self._progress)
+
+        # ── Секция: Переизмерить ──────────────────────────────────────
+        self._sec_remeasure = QLabel("ПЕРЕИЗМЕРИТЬ")
+        self._sec_remeasure.setObjectName("ExpertSection")
+        root.addWidget(self._sec_remeasure)
+
+        remeasure_row = QGridLayout()
+        remeasure_row.setSpacing(6)
+        remeasure_row.setColumnStretch(0, 1)
+        remeasure_row.setColumnStretch(1, 1)
+        remeasure_row.setColumnStretch(2, 1)
+
+        self._btn_essh   = QPushButton("♪ Сигнал")
+        self._btn_esh    = QPushButton("♪ Шум")
+        self._btn_peak   = QPushButton("⊕ Частоту")
+        for b, tip, mode in (
+            (self._btn_essh, "Переизмерить уровень сигнала (устройство включено)", "signal"),
+            (self._btn_esh,  "Переизмерить уровень фонового шума (устройство выключено)", "noise"),
+            (self._btn_peak, "Найти точный максимум из 5 захватов в окне ±10·RBW", "peak"),
+        ):
+            b.setObjectName("ExpertBtn")
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _, m=mode: self._start_remeasure(m))
+
+        self._btn_manual = QPushButton("Задать вручную…")
+        self._btn_manual.setObjectName("ExpertBtn")
+        self._btn_manual.setToolTip("Вручную задать уровень сигнала")
+        self._btn_manual.clicked.connect(self._set_manual_amplitude)
+
+        remeasure_row.addWidget(self._btn_essh,   0, 0)
+        remeasure_row.addWidget(self._btn_esh,    0, 1)
+        remeasure_row.addWidget(self._btn_peak,   0, 2)
+        remeasure_row.addWidget(self._btn_manual, 1, 0, 1, 3)
+        root.addLayout(remeasure_row)
+
+        # ── Секция: Наблюдение ────────────────────────────────────────
+        self._sec_watch = QLabel("НАБЛЮДЕНИЕ")
+        self._sec_watch.setObjectName("ExpertSection")
+        root.addWidget(self._sec_watch)
+
+        self._btn_zero_span = QPushButton("▷ Zero Span + ♪ Аудио")
+        self._btn_zero_span.setObjectName("ExpertBtn")
+        self._btn_zero_span.setCheckable(True)
+        self._btn_zero_span.setToolTip(
+            "Непрерывный мониторинг амплитуды на выбранной частоте.\n"
+            "Линия уровня во времени + аудио-тон для поиска максимума ИИ."
         )
+        self._btn_zero_span.clicked.connect(self._toggle_zero_span)
+        root.addWidget(self._btn_zero_span)
 
-    def _btn_qss(self) -> str:
-        t = self._theme
-        return (
-            f"QPushButton {{ background-color: {t['expert_btn_bg']}; color: {t['expert_btn_fg']};"
-            f" border: 1px solid {t['expert_btn_bdr']}; border-radius: 3px;"
-            f" padding: 4px 8px; font-size: 12px; }}"
-            f" QPushButton:hover {{ background-color: {t['expert_btn_hover']}; }}"
-            f" QPushButton:disabled {{ background-color: {t['expert_btn_dis_bg']};"
-            f" color: {t['expert_btn_dis_fg']}; }}"
-        )
+        # ── Удаление сигнала (только в экспертном режиме) ────────────
+        self._btn_delete = QPushButton("Удалить сигнал из таблицы")
+        self._btn_delete.setObjectName("ExpertDeleteBtn")
+        self._btn_delete.setToolTip("Удалить выбранный сигнал из таблицы и графика")
+        self._btn_delete.clicked.connect(self.delete_requested)
+        self._btn_delete.setVisible(False)
+        root.addWidget(self._btn_delete)
 
-    @staticmethod
-    def _btn_delete_qss(t: dict) -> str:
-        return (
-            btn_danger(t)
-            + f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
-        )
+        root.addStretch(1)
 
-    def _btn_active_qss(self) -> str:
-        t = self._theme
-        return (
-            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white; border: none;"
-            f" border-radius: 3px; padding: 4px 8px; font-size: 12px; font-weight: bold; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
-        )
+    # ==================================================================
+    # Theme
+    # ==================================================================
 
     def apply_theme(self, t: dict) -> None:
         self._theme = t
-        self.setStyleSheet(self._groupbox_qss(t))
-        btn = self._btn_qss()
-        for b in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
-            b.setStyleSheet(btn)
-        if self._btn_zero_span.isChecked():
-            self._btn_zero_span.setStyleSheet(self._btn_active_qss())
-        else:
-            self._btn_zero_span.setStyleSheet(btn)
-        self._btn_delete.setStyleSheet(self._btn_delete_qss(t))
-        self._progress.setStyleSheet(
+        # Карточка выбранного сигнала
+        self._signal_card.setStyleSheet(
+            f"#ExpertSignalCard {{ background: {t['bg_window']};"
+            f" border: 1px solid {t['btn_active']}; border-radius: 8px;"
+            f" border-left: 3px solid {t['btn_active']}; }}"
+            f" #ExpertFreq {{ color: {t['text']}; font-size: 16px; font-weight: 600;"
+            f" font-family: monospace; }}"
+            f" #ExpertCaption {{ color: {t['text_muted']}; font-size: 10px; }}"
+            f" #ExpertStatusChip {{ font-size: 10px; font-weight: 600;"
+            f" padding: 3px 10px; border-radius: 4px; }}"
+        )
+        # Readout-блок
+        self._readout.setStyleSheet(
+            f"#ExpertReadout {{ background: {t['bg_widget']};"
+            f" border: 1px solid {t['border']}; border-radius: 6px; }}"
+            f" #ReadoutKey {{ color: {t['text_muted']}; font-size: 9px;"
+            f" letter-spacing: 0.06em; }}"
+            f" #ReadoutVal {{ color: {t['text']}; font-size: 13px;"
+            f" font-family: monospace; }}"
+        )
+        # Секционные заголовки
+        section_qss = (
+            f"QLabel#ExpertSection {{ color: {t['text_muted']}; font-size: 10px;"
+            f" letter-spacing: 0.08em; padding: 4px 0 0; }}"
+        )
+        # Кнопки экспертной панели — компактные (26 px)
+        btn_qss = (
+            f"QPushButton#ExpertBtn {{ background: {t['expert_btn_bg']};"
+            f" color: {t['expert_btn_fg']}; border: 1px solid {t['expert_btn_bdr']};"
+            f" border-radius: 5px; padding: 5px 8px; font-size: 11px; min-height: 26px; }}"
+            f" QPushButton#ExpertBtn:hover {{ background: {t['border']};"
+            f" border-color: {t['border_input']}; }}"
+            f" QPushButton#ExpertBtn:checked {{ background: {t['btn_primary_bg']};"
+            f" color: white; border-color: {t['btn_primary_bg']}; }}"
+            f" QPushButton#ExpertBtn:checked:hover {{ background: {t['btn_primary_hover']}; }}"
+            f" QPushButton#ExpertBtn:disabled {{ background: {t['expert_btn_dis_bg']};"
+            f" color: {t['expert_btn_dis_fg']}; border-color: {t['btn_border']}; }}"
+        )
+        # Кнопка удаления — danger
+        delete_qss = (
+            f"QPushButton#ExpertDeleteBtn {{ background: {t['btn_danger']}; color: white;"
+            f" border: none; border-radius: 5px; padding: 6px 10px; font-size: 12px;"
+            f" min-height: 28px; }}"
+            f" QPushButton#ExpertDeleteBtn:hover {{ background: {t['btn_danger_hover']}; }}"
+            f" QPushButton#ExpertDeleteBtn:disabled {{ background: {t['btn_bg']};"
+            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
+        )
+        # Прогрессбар + подсказка
+        progress_qss = (
             f"QProgressBar {{ border: none; background: {t['bg_input']};"
-            f" border-radius: 3px; }}"
-            f" QProgressBar::chunk {{ background: #2196F3; border-radius: 3px; }}"
+            f" border-radius: 2px; }}"
+            f" QProgressBar::chunk {{ background: {t['btn_primary_bg']};"
+            f" border-radius: 2px; }}"
+        )
+        hint_qss = (
+            f"#ExpertHint {{ color: {t['text_dim']}; font-size: 11px;"
+            f" font-style: italic; padding: 2px 0; }}"
         )
 
-    # ------------------------------------------------------------------
-    # Публичное API
-    # ------------------------------------------------------------------
+        self.setStyleSheet(section_qss + btn_qss + delete_qss + progress_qss + hint_qss)
+        self._update_display()
+
+    # ==================================================================
+    # Публичный API (без изменений)
+    # ==================================================================
 
     def set_instrument(self, ctrl: BaseInstrument) -> None:
         self._ctrl = ctrl
@@ -158,16 +313,13 @@ class ExpertPanel(QGroupBox):
         self._update_display()
 
     def enable_remeasure(self, enabled: bool) -> None:
-        """Разрешить/запретить кнопки переизмерения (нельзя во время workflow)."""
         has = self._signal is not None
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
             btn.setEnabled(enabled and has)
-        # Zero Span управляется отдельно: когда он активен — кнопка всегда доступна
         if not self._btn_zero_span.isChecked():
             self._btn_zero_span.setEnabled(enabled and has)
 
     def enable_expert_mode(self, active: bool) -> None:
-        """Включить/выключить экспертный режим (после завершения всех измерений)."""
         self._expert_mode = active
         self._btn_delete.setVisible(active)
         self._btn_delete.setEnabled(active and self._signal is not None)
@@ -175,148 +327,72 @@ class ExpertPanel(QGroupBox):
             self._lbl_hint.setText("")
 
     def set_threshold(self, db: float) -> None:
-        """Задать порог обнаружения для отображения подсказки в экспертном режиме."""
         self._threshold_db = db
         self._update_display()
 
     def set_zero_span_active(self, active: bool) -> None:
-        """Синхронизировать состояние кнопки с внешним управлением (MainWindow)."""
         self._btn_zero_span.setChecked(active)
-        if active:
-            self._btn_zero_span.setText("Остановить мониторинг")
-            self._btn_zero_span.setStyleSheet(self._btn_active_qss())
-        else:
-            self._btn_zero_span.setText("Мониторинг частоты + Аудио")
-            self._btn_zero_span.setStyleSheet(self._btn_qss())
-
-    # ------------------------------------------------------------------
-    # Построение UI
-    # ------------------------------------------------------------------
-
-    def _init_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setSpacing(6)
-        root.setContentsMargins(8, 8, 8, 8)
-
-        # ── Информация о сигнале ──────────────────────────────────────
-        self._lbl_freq   = QLabel("—")
-        self._lbl_levels = QLabel("—")
-        self._lbl_status = QLabel("—")
-        for lbl in (self._lbl_freq, self._lbl_levels, self._lbl_status):
-            lbl.setWordWrap(True)
-        root.addWidget(self._lbl_freq)
-        root.addWidget(self._lbl_levels)
-        root.addWidget(self._lbl_status)
-
-        self._lbl_hint = QLabel("")
-        self._lbl_hint.setWordWrap(True)
-        self._lbl_hint.setStyleSheet("font-style: italic; font-size: 11px;")
-        root.addWidget(self._lbl_hint)
-
-        # ── Прогресс переизмерения ────────────────────────────────────
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 0)   # неопределённый режим (бегущий индикатор)
-        self._progress.setVisible(False)
-        self._progress.setFixedHeight(6)
-        self._progress.setStyleSheet("""
-            QProgressBar { border: none; background: #333; border-radius: 3px; }
-            QProgressBar::chunk { background: #2196F3; border-radius: 3px; }
-        """)
-        root.addWidget(self._progress)
-
-        # ── Кнопки переизмерения ──────────────────────────────────────
-        row1 = QHBoxLayout()
-        self._btn_essh = QPushButton("Переизмерить сигнал")
-        self._btn_esh  = QPushButton("Переизмерить шум")
-        self._btn_essh.setStyleSheet(self._btn_qss())
-        self._btn_esh.setStyleSheet(self._btn_qss())
-        self._btn_essh.setToolTip("Переизмерить уровень сигнала (устройство включено, N захватов)")
-        self._btn_esh.setToolTip("Переизмерить уровень фонового шума (устройство выключено, N захватов)")
-        self._btn_essh.clicked.connect(lambda: self._start_remeasure("signal"))
-        self._btn_esh.clicked.connect(lambda: self._start_remeasure("noise"))
-        row1.addWidget(self._btn_essh)
-        row1.addWidget(self._btn_esh)
-        root.addLayout(row1)
-
-        row2 = QHBoxLayout()
-        self._btn_peak   = QPushButton("Уточнить частоту (×5)")
-        self._btn_manual = QPushButton("Задать вручную…")
-        self._btn_peak.setStyleSheet(self._btn_qss())
-        self._btn_manual.setStyleSheet(self._btn_qss())
-        self._btn_peak.setToolTip("Найти точный максимум из 5 захватов в окне ±10·RBW")
-        self._btn_manual.setToolTip("Вручную задать уровень сигнала")
-        self._btn_peak.clicked.connect(lambda: self._start_remeasure("peak"))
-        self._btn_manual.clicked.connect(self._set_manual_amplitude)
-        row2.addWidget(self._btn_peak)
-        row2.addWidget(self._btn_manual)
-        root.addLayout(row2)
-
-        # ── Zero Span + аудиомонитор ─────────────────────────────────
-        self._btn_zero_span = QPushButton("Мониторинг частоты + Аудио")
-        self._btn_zero_span.setCheckable(True)
-        self._btn_zero_span.setStyleSheet(self._btn_qss())
-        self._btn_zero_span.setToolTip(
-            "Непрерывный мониторинг амплитуды на выбранной частоте.\n"
-            "График уровня во времени + аудиотон для поиска максимума ДН."
+        self._btn_zero_span.setText(
+            "■ Остановить мониторинг" if active else "▷ Zero Span + ♪ Аудио"
         )
-        self._btn_zero_span.clicked.connect(self._toggle_zero_span)
-        root.addWidget(self._btn_zero_span)
 
-        # ── Удаление сигнала (экспертный режим) ──────────────────────
-        self._btn_delete = QPushButton("Удалить сигнал из таблицы")
-        self._btn_delete.setStyleSheet(self._btn_delete_qss(self._theme))
-        self._btn_delete.setToolTip("Удалить выбранный сигнал из таблицы и графика")
-        self._btn_delete.clicked.connect(self.delete_requested)
-        self._btn_delete.setVisible(False)
-        root.addWidget(self._btn_delete)
-
-    # ------------------------------------------------------------------
+    # ==================================================================
     # Обновление отображения
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def _update_display(self) -> None:
         sig = self._signal
         has = sig is not None
-        ctrl_ok = self._ctrl is not None and self._ctrl.is_connected
+        ctrl_ok = (
+            self._ctrl is not None
+            and getattr(self._ctrl, "is_connected", False)
+        )
+        t = self._theme
 
         if not has:
-            self._lbl_freq.setText("<span style='color:#777'>Сигнал не выбран</span>")
-            self._lbl_levels.setText("")
+            self._lbl_freq.setText("—")
+            self._lbl_caption.setText("выберите сигнал в Результатах")
             self._lbl_status.setText("")
+            self._lbl_status.setStyleSheet("")
+            self._lbl_sig_v.setText("—")
+            self._lbl_sh_v.setText("—")
+            self._lbl_d_v.setText("—")
         else:
-            self._lbl_freq.setText(
-                f"<b>{sig.frequency_hz / 1e6:.4f} МГц</b>"
-                f"  Δ <b>{sig.amplitude_diff_db:+.1f} дБ</b>"
+            self._lbl_freq.setText(f"{sig.frequency_hz / 1e6:.4f} МГц")
+            self._lbl_caption.setText("выбрано в Результатах")
+            self._lbl_sig_v.setText(f"{sig.amplitude_on_db:.1f}")
+            self._lbl_sh_v.setText(f"{sig.amplitude_off_db:.1f}")
+            self._lbl_d_v.setText(f"{sig.amplitude_diff_db:+.1f}")
+
+            # Статус-чип: цвет фона по status_color
+            color_map = {
+                "green":  (t["tbl_status_ok"],   "ПЭМИН"),
+                "red":    (t["tbl_status_fail"],  "Брак"),
+                "blue":   (t["tbl_status_ext"],   "Внешний"),
+                "yellow": (t["tbl_status_warn"],  "Ожидание"),
+            }
+            color, label = color_map.get(
+                getattr(sig, "status_color", "yellow"),
+                (t["tbl_status_wait"], "Ожидание"),
             )
-            self._lbl_levels.setText(
-                f"Сигнал: <b>{sig.amplitude_on_db:.1f} дБ</b>"
-                f"  &nbsp;  Шум: {sig.amplitude_off_db:.1f} дБ"
-            )
-            t = self._theme
-            colors = {"green": t["tbl_status_ok"],   "red":    t["tbl_status_fail"],
-                      "blue":  t["tbl_status_ext"],   "yellow": t["tbl_status_warn"]}
-            labels = {"green": "ПЭМИН", "red": "Брак (В1)",
-                      "blue": "Внешний", "yellow": "Ожидание"}
-            c = sig.status_color
-            color_str = colors.get(c, "#aaa")
-            label_str = labels.get(c, c)
-            self._lbl_status.setText(
-                f"<span style='color:{color_str}'>{label_str}</span>"
+            self._lbl_status.setText(label)
+            self._lbl_status.setStyleSheet(
+                f"#ExpertStatusChip {{ background: {color}; color: white;"
+                f" font-size: 10px; font-weight: 600; padding: 3px 10px;"
+                f" border-radius: 4px; }}"
             )
 
-        # Подсказка «Вероятнее всего» — только в экспертном режиме с заданным порогом
+        # Подсказка «Вероятнее всего» — только в экспертном режиме
         if has and self._expert_mode and self._threshold_db is not None:
-            t = self._theme
-            delta = sig.amplitude_diff_db
-            if delta >= self._threshold_db:
-                hint_label = "Вероятнее всего: ПЭМИН"
-                hint_color = t["tbl_status_ok"]
+            if sig.amplitude_diff_db >= self._threshold_db:
+                self._lbl_hint.setText(
+                    f"<span style='color:{t['tbl_status_ok']}'>Вероятнее всего: ПЭМИН</span>"
+                )
             else:
-                hint_label = "Вероятнее всего: Брак (ниже порога)"
-                hint_color = t["tbl_status_fail"]
-            self._lbl_hint.setText(
-                f"<span style='color:{hint_color}'>{hint_label}</span>"
-            )
+                self._lbl_hint.setText(
+                    f"<span style='color:{t['tbl_status_fail']}'>"
+                    "Вероятнее всего: Брак (ниже порога)</span>"
+                )
         else:
             self._lbl_hint.setText("")
 
@@ -327,32 +403,28 @@ class ExpertPanel(QGroupBox):
         if self._expert_mode:
             self._btn_delete.setEnabled(has)
 
-    # ------------------------------------------------------------------
-    # Переизмерение
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Переизмерение (логика без изменений)
+    # ==================================================================
 
     def _start_remeasure(self, mode: str) -> None:
         if self._signal is None or self._ctrl is None:
             return
         if self._worker and self._worker.isRunning():
             return
-
         n = 5 if mode == "peak" else 3
         self._worker = _RemeasureWorker(self._ctrl, self._signal, mode, n)
         self._worker.done.connect(self._on_remeasure_done)
         self._worker.error.connect(self._on_remeasure_error)
         self._worker.finished.connect(lambda: self._progress.setVisible(False))
-
         self._progress.setVisible(True)
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
             btn.setEnabled(False)
-
         self._worker.start()
 
     def _on_remeasure_done(self, freq_hz: float, amp_db: float) -> None:
         sig  = self._signal
         mode = self._worker._mode if self._worker else "signal"
-
         if mode == "signal":
             sig.amplitude_on_db   = amp_db
             sig.amplitude_diff_db = amp_db - sig.amplitude_off_db
@@ -363,7 +435,6 @@ class ExpertPanel(QGroupBox):
             sig.frequency_hz      = freq_hz
             sig.amplitude_on_db   = amp_db
             sig.amplitude_diff_db = amp_db - sig.amplitude_off_db
-
         self._update_display()
         self.signal_modified.emit(self._signal_idx)
         for btn in (self._btn_essh, self._btn_esh, self._btn_peak, self._btn_manual):
@@ -388,10 +459,6 @@ class ExpertPanel(QGroupBox):
             self._signal.amplitude_diff_db = val - self._signal.amplitude_off_db
             self._update_display()
             self.signal_modified.emit(self._signal_idx)
-
-    # ------------------------------------------------------------------
-    # Переключение режима нулевого обзора (Zero Span)
-    # ------------------------------------------------------------------
 
     def _toggle_zero_span(self, checked: bool) -> None:
         if checked:

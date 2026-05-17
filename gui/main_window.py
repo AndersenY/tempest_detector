@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QTableWidget, QTableWidgetItem, QLabel,
                              QProgressBar, QMessageBox, QGroupBox, QHeaderView,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
-                             QCheckBox, QStackedWidget, QComboBox,
-                             QStyledItemDelegate, QAbstractItemDelegate)
+                             QCheckBox, QStackedWidget, QComboBox, QTabWidget,
+                             QStyledItemDelegate, QAbstractItemDelegate, QFrame, QMenu)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt6.QtGui import QColor, QAction, QActionGroup, QIcon
 from core.config import PanoramaConfig
@@ -24,7 +24,7 @@ from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 from gui.expert_panel import ExpertPanel
 from gui.zero_span_widget import ZeroSpanWidget
 from gui.live_widget import LiveWidget
-from gui.theme import DARK, LIGHT
+from gui.theme import DARK, LIGHT, btn_primary, btn_danger
 from core.live_worker import LiveWorker
 
 
@@ -155,14 +155,9 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(_icon_path))
         self.resize(1200, 800)
 
-        self.setStyleSheet("""
-            QMainWindow { background-color: #1e1e1e; }
-            QGroupBox {
-                font-weight: bold; border: 1px solid #444; border-radius: 5px;
-                margin-top: 10px; padding-top: 10px; color: #e0e0e0;
-            }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px 0 5px; }
-        """)
+        self.setStyleSheet(
+            "QMainWindow { background-color: #14171c; }"
+        )
 
         self._theme = DARK
         self.cfg = PanoramaConfig()
@@ -193,22 +188,96 @@ class MainWindow(QMainWindow):
         self._remote_server.start()
 
         self._init_ui()
-        self._setup_menu_bar()
+        self._setup_menus()
+        self.menuBar().hide()
         self._update_remote_status(0)
         self.apply_theme(DARK)
 
-    def _setup_menu_bar(self):
+    def _build_app_bar(self) -> QWidget:
+        """Кастомная строка приложения: логотип, меню, статус-пилюли."""
+        bar = QWidget()
+        bar.setObjectName("AppBar")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(16, 0, 16, 0)
+        lay.setSpacing(0)
+        bar.setFixedHeight(44)
+
+        # Логотип — иконка + имя
+        _logo_icon = QWidget()
+        _logo_icon.setObjectName("AppLogoIcon")
+        _logo_icon.setFixedSize(22, 22)
+        _lic = QHBoxLayout(_logo_icon)
+        _lic.setContentsMargins(0, 0, 0, 0)
+        _lic_lbl = QLabel("◉")
+        _lic_lbl.setObjectName("AppLogoGlyph")
+        _lic_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _lic.addWidget(_lic_lbl)
+        lay.addWidget(_logo_icon)
+        lay.addSpacing(8)
+
+        _logo_name = QLabel("ПЭМИН Детектор")
+        _logo_name.setObjectName("AppLogoName")
+        lay.addWidget(_logo_name)
+        lay.addSpacing(16)
+
+        # Разделитель
+        _sep = QWidget()
+        _sep.setObjectName("AppBarSep")
+        _sep.setFixedWidth(1)
+        _sep.setFixedHeight(18)
+        lay.addWidget(_sep)
+        lay.addSpacing(4)
+
+        # Меню-кнопки
+        self._menu_btns: dict[str, QPushButton] = {}
+        for name in ("Режим", "Действие", "Устройство", "Вид"):
+            btn = QPushButton(name)
+            btn.setObjectName("AppMenuBtn")
+            btn.setFlat(True)
+            self._menu_btns[name] = btn
+            lay.addWidget(btn)
+        # Меню будут привязаны в _setup_menus после создания
+
+        # Spacer
+        lay.addStretch(1)
+
+        # Пилюля клиентов
+        self._pill_clients = QLabel("● Нет клиентов")
+        self._pill_clients.setObjectName("AppPill")
+        lay.addWidget(self._pill_clients)
+        lay.addSpacing(6)
+
+        # Пилюля устройства
+        self._pill_device = QLabel("RTL-SDR")
+        self._pill_device.setObjectName("AppPill")
+        lay.addWidget(self._pill_device)
+        lay.addSpacing(6)
+
+        # Пилюля режима
+        self._pill_mode = QLabel("Метод разности")
+        self._pill_mode.setObjectName("AppPill")
+        lay.addWidget(self._pill_mode)
+        lay.addSpacing(8)
+
+        # Кнопка смены темы
+        self._btn_theme_toggle = QPushButton("◑")
+        self._btn_theme_toggle.setObjectName("AppIconBtn")
+        self._btn_theme_toggle.setFixedSize(28, 28)
+        self._btn_theme_toggle.setToolTip("Переключить тему")
+        self._btn_theme_toggle.clicked.connect(self._toggle_theme)
+        lay.addWidget(self._btn_theme_toggle)
+
+        return bar
+
+    def _setup_menus(self):
         mb = self.menuBar()
-        mb.setStyleSheet("""
-            QMenuBar { background-color: #2b2b2b; color: #e0e0e0; }
-            QMenuBar::item:selected { background-color: #444; }
-            QMenu { background-color: #2b2b2b; color: #e0e0e0; border: 1px solid #555; }
-            QMenu::item:selected { background-color: #3a3a3a; }
-            QMenu::separator { height: 1px; background: #555; margin: 3px 0; }
-        """)
 
         # ── Режим ─────────────────────────────────────────────────────
-        menu_mode = mb.addMenu("Режим")
+        menu_mode = QMenu(self)
+        self._menu_btns["Режим"].clicked.connect(
+            lambda: menu_mode.exec(self._menu_btns["Режим"].mapToGlobal(
+                self._menu_btns["Режим"].rect().bottomLeft()))
+        )
 
         mode_group = QActionGroup(self)
         mode_group.setExclusive(True)
@@ -271,11 +340,14 @@ class MainWindow(QMainWindow):
         )
         menu_mode.addAction(self.act_expert_mode)
         # expert_panel создан в _init_ui() (раньше _setup_menu_bar), подключаем здесь
-        self.expert_panel.setVisible(self.act_expert_mode.isChecked())
         self.act_expert_mode.toggled.connect(self._on_expert_mode_toggled)
 
         # ── Действие ──────────────────────────────────────────────────
-        menu_action = mb.addMenu("Действие")
+        menu_action = QMenu(self)
+        self._menu_btns["Действие"].clicked.connect(
+            lambda: menu_action.exec(self._menu_btns["Действие"].mapToGlobal(
+                self._menu_btns["Действие"].rect().bottomLeft()))
+        )
 
         self.act_load = QAction("Загрузить измерение", self)
         self.act_load.setShortcut("Ctrl+O")
@@ -301,7 +373,11 @@ class MainWindow(QMainWindow):
         menu_action.addAction(self.act_export_spectrum)
 
         # ── Устройство ────────────────────────────────────────────────
-        menu_hw = mb.addMenu("Устройство")
+        menu_hw = QMenu(self)
+        self._menu_btns["Устройство"].clicked.connect(
+            lambda: menu_hw.exec(self._menu_btns["Устройство"].mapToGlobal(
+                self._menu_btns["Устройство"].rect().bottomLeft()))
+        )
         hw_group = QActionGroup(self)
         hw_group.setExclusive(True)
 
@@ -319,7 +395,11 @@ class MainWindow(QMainWindow):
         menu_hw.addAction(self.act_hw_hackrf)
 
         # ── Вид ───────────────────────────────────────────────────────
-        menu_view = mb.addMenu("Вид")
+        menu_view = QMenu(self)
+        self._menu_btns["Вид"].clicked.connect(
+            lambda: menu_view.exec(self._menu_btns["Вид"].mapToGlobal(
+                self._menu_btns["Вид"].rect().bottomLeft()))
+        )
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
 
@@ -335,6 +415,11 @@ class MainWindow(QMainWindow):
         self.act_theme_light.triggered.connect(lambda: self.apply_theme(LIGHT))
         theme_group.addAction(self.act_theme_light)
         menu_view.addAction(self.act_theme_light)
+        # Сохранить ссылки на меню для apply_theme
+        self._menu_mode = menu_mode
+        self._menu_action_menu = menu_action
+        self._menu_hw = menu_hw
+        self._menu_view = menu_view
 
     def _set_scan_mode(self, mode: str):
         # Смена режима во время активной сессии → сбрасываем всё.
@@ -356,6 +441,14 @@ class MainWindow(QMainWindow):
             self.btn_action.setText("ЗАПУСТИТЬ СИМУЛЯТОР")
         elif mode == "demo":
             self.btn_action.setText("ЗАГРУЗИТЬ АРХИВ")
+        _mode_pill_labels = {
+            "full":       "Метод разности",
+            "quick":      "Быстрое обнаруж.",
+            "harmonic":   "Поиск гармоник",
+            "simulator":  "Симулятор",
+            "demo":       "Демо-режим",
+        }
+        self._pill_mode.setText(_mode_pill_labels.get(mode, mode))
         # Колонка «Гармоники» — только для harmonic-режима
         self.table.setColumnHidden(4, mode != "harmonic")
 
@@ -372,6 +465,17 @@ class MainWindow(QMainWindow):
             return
         self._hw = hw
         self._update_hw_limits()
+        _hw_labels = {"rtlsdr": "RTL-SDR", "hackrf": "HackRF One"}
+        self._pill_device.setText(_hw_labels.get(hw, hw))
+
+    def _toggle_theme(self) -> None:
+        from gui.theme import DARK, LIGHT
+        if self._theme is DARK:
+            self.apply_theme(LIGHT)
+            self.act_theme_light.setChecked(True)
+        else:
+            self.apply_theme(DARK)
+            self.act_theme_dark.setChecked(True)
 
     # Дефолты по устройствам: (start_mhz, stop_mhz, avg_count)
     _HW_DEFAULTS = {
@@ -433,40 +537,60 @@ class MainWindow(QMainWindow):
         self._theme = t
         self._status_delegate.set_theme(t)
 
-        # Главное окно + QGroupBox глобально
+        # Главное окно + QGroupBox + глобальные чекбоксы
         self.setStyleSheet(
             f"QMainWindow {{ background-color: {t['bg_window']}; }}"
             f" QGroupBox {{ font-weight: bold; border: 1px solid {t['border']};"
             f" border-radius: 5px; margin-top: 10px; padding-top: 10px; color: {t['text']}; }}"
             f" QGroupBox::title {{ subcontrol-origin: margin; left: 10px;"
             f" padding: 0 5px 0 5px; }}"
+            f" QCheckBox::indicator {{ width: 14px; height: 14px;"
+            f" border: 1px solid {t['border_input']}; border-radius: 3px;"
+            f" background: {t['bg_input']}; }}"
+            f" QCheckBox::indicator:checked {{ background: {t['btn_primary_bg']};"
+            f" border-color: {t['btn_primary_bg']}; }}"
         )
 
-        # Меню
-        self.menuBar().setStyleSheet(
-            f"QMenuBar {{ background-color: {t['mb_bg']}; color: {t['mb_fg']}; }}"
-            f" QMenuBar::item:selected {{ background-color: {t['mb_sel']}; }}"
-            f" QMenu {{ background-color: {t['menu_bg']}; color: {t['mb_fg']};"
-            f" border: 1px solid {t['menu_bdr']}; }}"
-            f" QMenu::item:selected {{ background-color: {t['menu_sel']}; }}"
-            f" QMenu::separator {{ height: 1px; background: {t['menu_bdr']}; margin: 3px 0; }}"
+        # Кастомный app bar
+        self._app_bar.setStyleSheet(
+            f"QWidget#AppBar {{ background: {t['bg_widget']};"
+            f" border-bottom: 1px solid {t['border']}; }}"
+            f" QWidget#AppLogoIcon {{ background: {t['btn_active']}; border-radius: 5px; }}"
+            f" QLabel#AppLogoGlyph {{ color: white; font-size: 13px; }}"
+            f" QLabel#AppLogoName {{ color: {t['text']}; font-size: 13px; font-weight: 700;"
+            f" letter-spacing: -0.01em; }}"
+            f" QWidget#AppBarSep {{ background: {t['border_input']}; }}"
+            f" QPushButton#AppMenuBtn {{ background: transparent; color: {t['text_dim']};"
+            f" font-size: 12px; padding: 4px 10px; border: none; border-radius: 4px; }}"
+            f" QPushButton#AppMenuBtn:hover {{ background: {t['bg_input']}; color: {t['text']}; }}"
+            f" QPushButton#AppMenuBtn:pressed {{ background: {t['bg_input']}; }}"
+            f" QLabel#AppPill {{ color: {t['text_dim']}; font-size: 12px;"
+            f" padding: 4px 10px; border-radius: 999px;"
+            f" background: {t['bg_input']}; border: 1px solid {t['border']}; }}"
+            f" QPushButton#AppIconBtn {{ background: transparent; color: {t['text_dim']};"
+            f" font-size: 16px; border: none; border-radius: 6px; }}"
+            f" QPushButton#AppIconBtn:hover {{ background: {t['bg_input']}; color: {t['text']}; }}"
         )
+        # Стиль для всплывающих меню (QMenu не наследует из app_bar)
+        _menu_qss = (
+            f"QMenu {{ background-color: {t['menu_bg']}; color: {t['mb_fg']};"
+            f" border: 1px solid {t['menu_bdr']}; border-radius: 6px; padding: 4px; }}"
+            f" QMenu::item {{ padding: 5px 16px 5px 12px; border-radius: 4px; }}"
+            f" QMenu::item:selected {{ background-color: {t['menu_sel']}; color: {t['text']}; }}"
+            f" QMenu::separator {{ height: 1px; background: {t['menu_bdr']}; margin: 4px 0; }}"
+        )
+        for menu in (self._menu_mode, self._menu_action_menu, self._menu_hw, self._menu_view):
+            menu.setStyleSheet(_menu_qss)
 
         # Прогресс-бар
         self.prog.setStyleSheet(
-            f"QProgressBar {{ border: 1px solid {t['border']}; border-radius: 2px;"
-            f" text-align: center; color: {t['text']}; background-color: {t['bg_progress']}; }}"
+            f"QProgressBar {{ border: none; border-radius: 0px;"
+            f" background-color: {t['bg_progress']}; }}"
             f" QProgressBar::chunk {{ background-color: {t['progress_chunk']}; }}"
         )
 
-        # Кнопка СБРОС
-        self.btn_stop.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_danger']}; color: white;"
-            f" font-weight: bold; padding: 5px 15px; border-radius: 2px; border: none; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_danger_hover']}; }}"
-            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
-        )
+        # Кнопка СБРОС — через единый helper
+        self.btn_stop.setStyleSheet(btn_danger(t, large=True))
 
         # Таблица результатов
         self.table.setStyleSheet(
@@ -479,22 +603,25 @@ class MainWindow(QMainWindow):
             f" QTableWidget::item:selected {{ background-color: {t['btn_active']}; color: white; }}"
         )
 
-        # Панель инструкции
+        # Action bar: icon box + двухстрочный статус
+        self._icon_box.setStyleSheet(
+            f"QWidget#StatusIconBox {{ background: {t['bg_input']}; border-radius: 8px; }}"
+        )
+        self._lbl_status_icon.setStyleSheet(
+            f"color: {t['btn_active']}; font-size: 16px;"
+        )
+        self._lbl_status_title.setStyleSheet(
+            f"color: {t['text_muted']}; font-size: 10px; letter-spacing: 0.08em;"
+        )
         self.lbl_instruction.setStyleSheet(
-            f"color: {t['text']}; font-size: 13px; padding: 10px;"
-            f" background-color: {t['bg_instruction']}; border: 1px solid {t['border']};"
-            f" border-radius: 4px;"
+            f"color: {t['text']}; font-size: 13px;"
         )
 
         # Панель удалённого управления
         self._remote_box.setStyleSheet(
-            f"QGroupBox {{ font-weight: bold; border: 1px solid {t['border']};"
-            f" border-radius: 4px; margin-top: 8px; padding-top: 6px;"
-            f" color: {t['remote_title']}; font-size: 11px; }}"
-            f" QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 4px; }}"
-            f" QLabel {{ color: {t['text_dim']}; font-size: 11px; }}"
+            f"QLabel {{ color: {t['text_dim']}; font-size: 12px; }}"
             f" QSpinBox, QComboBox {{ background: {t['bg_input']}; color: {t['text']};"
-            f" border: 1px solid {t['border_input']}; border-radius: 3px; padding: 1px 3px; }}"
+            f" border: 1px solid {t['border_input']}; border-radius: 4px; padding: 2px 4px; }}"
             f" QComboBox::drop-down {{ border: none; }}"
             f" QComboBox QAbstractItemView {{ background: {t['bg_widget']}; color: {t['text']};"
             f" selection-background-color: {t['mb_sel']}; }}"
@@ -506,34 +633,53 @@ class MainWindow(QMainWindow):
         self._spin_settle.setStyleSheet(
             f"QSpinBox {{ background: {t['bg_input']}; color: {t['text']};"
             f" border: 1px solid {t['border_input']};"
-            f" border-radius: 3px; padding: 1px 3px; min-width: 75px; }}"
+            f" border-radius: 4px; padding: 2px 4px; min-width: 75px; }}"
         )
 
         # Панель параметров
         self._settings_panel.setStyleSheet(
-            f"QGroupBox {{ font-weight: bold; border: 1px solid {t['border']};"
-            f" border-radius: 5px; margin-top: 10px; padding-top: 8px; color: {t['text']}; }}"
-            f" QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}"
+            f"background-color: {t['bg_widget']}; border-bottom: 1px solid {t['border']};"
             f" QDoubleSpinBox, QSpinBox {{ background-color: {t['bg_input']}; color: {t['text']};"
-            f" border: 1px solid {t['border_input']}; border-radius: 3px;"
-            f" padding: 2px 4px; min-width: 70px; }}"
-            f" QLabel {{ color: {t['text_dim']}; font-size: 12px; }}"
+            f" border: 1px solid {t['border_input']}; border-radius: 4px;"
+            f" font-family: monospace;"
+            f" padding: 2px 5px; min-width: 72px; }}"
+            f" QLabel#SettingsLabel {{ color: {t['text_muted']}; font-size: 10px;"
+            f" letter-spacing: 0.05em; }}"
+            f" QLabel#SettingsArrow {{ color: {t['text_muted']}; font-size: 11px; }}"
+            f" QFrame#SettingsSep {{ background: {t['border']}; border: none;"
+            f" max-height: 24px; margin-top: 8px; }}"
             f" QCheckBox {{ color: {t['text_dim']}; font-size: 12px; }}"
+            f" QCheckBox::indicator {{ width: 14px; height: 14px;"
+            f" border: 1px solid {t['border_input']}; border-radius: 3px;"
+            f" background: {t['bg_input']}; }}"
+            f" QCheckBox::indicator:checked {{ background: {t['btn_active']};"
+            f" border-color: {t['btn_active']}; }}"
         )
         self.spin_avg.setStyleSheet(
             f"QSpinBox {{ background-color: {t['bg_input']}; color: {t['text']};"
             f" border: 1px solid {t['border_input']}; border-radius: 3px;"
-            f" padding: 2px 4px; min-width: 55px; }}"
+            f" font-family: monospace; padding: 2px 4px; min-width: 55px; }}"
         )
 
         # Кнопка действия
-        self.btn_action.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
-            f" font-weight: bold; padding: 12px; border-radius: 2px;"
-            f" font-size: 14px; border: none; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
-            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
+        # Кнопка действия — через единый helper
+        self.btn_action.setStyleSheet(btn_primary(t, large=True))
+
+        # Панель действия
+        self._action_bar.setStyleSheet(
+            f"background-color: {t['bg_widget']}; border-bottom: 1px solid {t['border']};"
+        )
+
+        # Боковая панель (вкладки)
+        self._sidebar.setStyleSheet(
+            f"QTabWidget::pane {{ border-left: 1px solid {t['border']};"
+            f" border-top: 1px solid {t['border']}; background: {t['bg_widget']}; }}"
+            f" QTabBar::tab {{ background: {t['bg_window']}; color: {t['text_muted']};"
+            f" padding: 8px 12px; border-bottom: 1px solid {t['border']};"
+            f" font-size: 12px; min-width: 90px; }}"
+            f" QTabBar::tab:selected {{ background: {t['bg_widget']}; color: {t['text']};"
+            f" border-bottom: 2px solid {t['btn_active']}; }}"
+            f" QTabBar::tab:hover {{ background: {t['bg_input']}; color: {t['text']}; }}"
         )
 
         # Дочерние виджеты с pyqtgraph
@@ -551,24 +697,72 @@ class MainWindow(QMainWindow):
         w = QWidget()
         self.setCentralWidget(w)
         main_layout = QVBoxLayout(w)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Панель прогресса + стоп
-        self._top_bar = QWidget()
-        top_control_layout = QHBoxLayout(self._top_bar)
-        top_control_layout.setContentsMargins(0, 0, 0, 0)
-        top_control_layout.setSpacing(5)
+        # ── Кастомный app bar (логотип + меню + пилюли) ───────────────
+        self._app_bar = self._build_app_bar()
+        main_layout.addWidget(self._app_bar)
+
+        # ── Панель действия (инструкция + кнопки + прогресс) ──────────
+        self._action_bar = QWidget()
+        action_bar_layout = QVBoxLayout(self._action_bar)
+        action_bar_layout.setContentsMargins(0, 0, 0, 0)
+        action_bar_layout.setSpacing(0)
+
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(14, 8, 14, 8)
+        action_row.setSpacing(12)
+
+        # Иконка состояния — 32×32 контейнер с bg_input фоном
+        self._icon_box = QWidget()
+        self._icon_box.setFixedSize(32, 32)
+        self._icon_box.setObjectName("StatusIconBox")
+        _icon_box_layout = QHBoxLayout(self._icon_box)
+        _icon_box_layout.setContentsMargins(0, 0, 0, 0)
+        self._lbl_status_icon = QLabel("◎")
+        self._lbl_status_icon.setObjectName("StatusIcon")
+        self._lbl_status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _icon_box_layout.addWidget(self._lbl_status_icon)
+        action_row.addWidget(self._icon_box)
+
+        # Двухстрочный статус: заголовок фазы + описание
+        status_block = QVBoxLayout()
+        status_block.setSpacing(1)
+        status_block.setContentsMargins(0, 0, 0, 0)
+
+        self._lbl_status_title = QLabel("ГОТОВ")
+        self._lbl_status_title.setObjectName("StatusTitle")
+
+        self.lbl_instruction = QLabel("Подключите SDR для начала работы.")
+        self.lbl_instruction.setWordWrap(False)
+        self.lbl_instruction.setObjectName("StatusDescription")
+
+        status_block.addWidget(self._lbl_status_title)
+        status_block.addWidget(self.lbl_instruction)
+        action_row.addLayout(status_block, 1)
+
+        self.btn_stop = QPushButton("Сброс")
+        self.btn_stop.setFixedHeight(34)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self._reset_to_start)
+        action_row.addWidget(self.btn_stop)
+
+        self.btn_action = QPushButton("Подключить и начать")
+        self.btn_action.setFixedHeight(34)
+        self.btn_action.clicked.connect(self._on_control_button_clicked)
+        action_row.addWidget(self.btn_action)
+
+        action_bar_layout.addLayout(action_row)
 
         self.prog = QProgressBar()
-        self.prog.setTextVisible(True)
-        self.prog.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #444; border-radius: 2px;
-                text-align: center; color: #e0e0e0; background-color: #333;
-            }
-            QProgressBar::chunk { background-color: #2b5a8c; }
-        """)
+        self.prog.setTextVisible(False)
+        self.prog.setFixedHeight(2)
+        self.prog.setVisible(False)
+        action_bar_layout.addWidget(self.prog)
+
+        main_layout.addWidget(self._action_bar)
+
         # Плавная анимация прогрессбара
         self._prog_anim = QPropertyAnimation(self.prog, b"value")
         self._prog_anim.setDuration(450)
@@ -579,25 +773,21 @@ class MainWindow(QMainWindow):
         self._settle_timer.setSingleShot(True)
         self._settle_timer.timeout.connect(self._finish_semi_auto_resume)
 
-        self.btn_stop = QPushButton("СБРОС")
-        self.btn_stop.setStyleSheet("""
-            QPushButton { background-color: #8b2020; color: white; font-weight: bold;
-                          padding: 5px 15px; border-radius: 2px; border: none; }
-            QPushButton:hover { background-color: #a02828; }
-            QPushButton:disabled { background-color: #4a4a4a; color: #888; }
-        """)
-        self.btn_stop.setEnabled(False)
-        self.btn_stop.clicked.connect(self._reset_to_start)
-
-        top_control_layout.addWidget(self.prog, 1)
-        top_control_layout.addWidget(self.btn_stop)
-        main_layout.addWidget(self._top_bar)
-
-        # Панель параметров измерения
+        # ── Панель параметров измерения ────────────────────────────────
         self._settings_panel = self._create_settings_panel()
         main_layout.addWidget(self._settings_panel)
 
-        # График спектра / Zero Span (переключаются через QStackedWidget)
+        # ── Основная область: спектр + боковая панель ─────────────────
+        self._main_area = QWidget()
+        self._main_area.setSizePolicy(
+            self._main_area.sizePolicy().horizontalPolicy(),
+            self._main_area.sizePolicy().verticalPolicy()
+        )
+        main_area_layout = QHBoxLayout(self._main_area)
+        main_area_layout.setSpacing(0)
+        main_area_layout.setContentsMargins(0, 0, 0, 0)
+
+        # График спектра / Zero Span / Live (QStackedWidget)
         self.plot = SpectrumPlotWidget()
         self.plot.freq_clicked.connect(self._on_graph_click)
         self.plot.freq_mark_added.connect(self._on_panorama_freq_marked)
@@ -616,21 +806,21 @@ class MainWindow(QMainWindow):
         self.live_widget.stop_requested.connect(self._on_live_stop_requested)
         self.live_widget.resume_requested.connect(self._on_live_resume_requested)
         self._spectrum_stack = QStackedWidget()
-        self._spectrum_stack.addWidget(self.plot)            # index 0 — спектр
+        self._spectrum_stack.addWidget(self.plot)              # index 0 — спектр
         self._spectrum_stack.addWidget(self.zero_span_widget)  # index 1 — нулевой обзор
-        self._spectrum_stack.addWidget(self.live_widget)     # index 2 — прямой эфир
-        main_layout.addWidget(self._spectrum_stack, 3)
+        self._spectrum_stack.addWidget(self.live_widget)       # index 2 — прямой эфир
+        main_area_layout.addWidget(self._spectrum_stack, 1)
 
-        # Нижняя секция: таблица + управление
-        self._bottom_widget = QWidget()
-        bottom_section = QHBoxLayout(self._bottom_widget)
-        bottom_section.setContentsMargins(0, 0, 0, 0)
-        bottom_section.setSpacing(10)
+        # ── Боковая панель (вкладки) ───────────────────────────────────
+        self._sidebar = QTabWidget()
+        self._sidebar.setMinimumWidth(420)
+        self._sidebar.setMaximumWidth(520)
 
-        # Таблица результатов
-        table_group = QGroupBox("Результаты измерений")
-        table_layout = QVBoxLayout(table_group)
-        table_layout.setContentsMargins(5, 5, 5, 5)
+        # Вкладка 0: Результаты
+        results_tab = QWidget()
+        results_layout = QVBoxLayout(results_tab)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(0)
 
         self.table = QTableWidget()
         self.table.setColumnCount(6)
@@ -638,7 +828,15 @@ class MainWindow(QMainWindow):
             ["Частота (МГц)", "Δ дБ", "Сигнал, дБ", "Шум, дБ", "Гармоники", "Статус"]
         )
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(50)
+        self.table.setColumnWidth(0, 96)   # Частота (МГц)
+        self.table.setColumnWidth(1, 52)   # Δ дБ
+        self.table.setColumnWidth(2, 70)   # Сигнал, дБ
+        self.table.setColumnWidth(3, 70)   # Шум, дБ
+        self.table.setColumnWidth(4, 72)   # Гармоники
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)  # Статус — на остаток
         self.table.setColumnHidden(4, True)   # «Гармоники» — скрыта до активации метода
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -648,61 +846,188 @@ class MainWindow(QMainWindow):
         self.table.itemChanged.connect(self._on_table_item_changed)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background-color: #252525; alternate-background-color: #2d2d2d;
-                color: #e0e0e0; gridline-color: #444; border: 1px solid #444;
-            }
-            QHeaderView::section {
-                background-color: #333; color: #fff; padding: 4px;
-                border: 1px solid #444; font-weight: bold;
-            }
-            QTableWidget::item:selected { background-color: #2196F3; color: white; }
-        """)
-        table_layout.addWidget(self.table)
-        bottom_section.addWidget(table_group, 2)
+        results_layout.addWidget(self.table)
+        self._sidebar.addTab(results_tab, "Результаты")
 
-        # Панель статуса и управления
-        control_group = QGroupBox("Статус и Управление")
-        control_layout = QVBoxLayout(control_group)
-        control_layout.setContentsMargins(10, 10, 10, 10)
-        control_layout.setSpacing(10)
+        # Вкладка 1: Удалённое управление
+        remote_tab = self._create_remote_panel()
+        self._sidebar.addTab(remote_tab, "Удалённое")
 
-        self.lbl_instruction = QLabel("Подключите SDR для начала работы.")
-        self.lbl_instruction.setStyleSheet(
-            "color: #e0e0e0; font-size: 13px; padding: 10px;"
-            "background-color: #2b2b2b; border: 1px solid #444; border-radius: 4px;"
-        )
-        self.lbl_instruction.setWordWrap(True)
-        self.lbl_instruction.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.lbl_instruction.setMinimumHeight(80)
-        control_layout.addWidget(self.lbl_instruction)
+        # Вкладка 2: Эксперт
+        expert_tab = QWidget()
+        expert_tab_layout = QVBoxLayout(expert_tab)
+        expert_tab_layout.setContentsMargins(0, 0, 0, 0)
+        expert_tab_layout.setSpacing(0)
 
         self.expert_panel = ExpertPanel()
         self.expert_panel.signal_modified.connect(self._on_expert_signal_modified)
         self.expert_panel.zero_span_started.connect(self._on_zero_span_start)
         self.expert_panel.zero_span_stopped.connect(self._on_zero_span_stop)
         self.expert_panel.delete_requested.connect(self._on_expert_delete_requested)
-        control_layout.addWidget(self.expert_panel)
+        expert_tab_layout.addWidget(self.expert_panel)
+        expert_tab_layout.addStretch(1)
+        self._sidebar.addTab(expert_tab, "Эксперт")
 
-        # ── Панель удалённого управления ──────────────────────────────
-        _remote_style = """
-            QGroupBox { font-weight: bold; border: 1px solid #444; border-radius: 4px;
-                        margin-top: 8px; padding-top: 6px; color: #90CAF9; font-size: 11px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
-            QLabel { color: #ccc; font-size: 11px; }
-            QSpinBox, QComboBox { background:#333; color:#e0e0e0; border:1px solid #555;
-                                  border-radius:3px; padding:1px 3px; }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView { background:#2b2b2b; color:#e0e0e0;
-                                          selection-background-color:#444; }
+        # Подписываемся на сигналы модели таблицы для автообновления
+        # счётчика вкладки «Результаты» без явных вызовов в каждом методе.
+        self.table.model().rowsInserted.connect(self._refresh_sidebar_tab_titles)
+        self.table.model().rowsRemoved.connect(self._refresh_sidebar_tab_titles)
+        self.table.model().modelReset.connect(self._refresh_sidebar_tab_titles)
+
+        # Двойной клик → переход на вкладку «Эксперт»
+        self.table.itemDoubleClicked.connect(self._on_table_double_clicked)
+
+        main_area_layout.addWidget(self._sidebar)
+        main_layout.addWidget(self._main_area, 1)
+
+    # ------------------------------------------------------------------
+    # Заголовки вкладок сайдбара (с бейджами/счётчиками)
+    # ------------------------------------------------------------------
+
+    def _refresh_sidebar_tab_titles(self) -> None:
+        """Обновляет тексты вкладок:
+        — «Результаты (N)» если есть обнаружения
+        — «Эксперт · 103.8» если выбран сигнал
         """
-        self._remote_box = QGroupBox("Удалённое управление")
-        remote_box = self._remote_box
-        remote_box.setStyleSheet(_remote_style)
-        remote_inner = QVBoxLayout(remote_box)
+        from PyQt6.QtGui import QColor
+
+        # Таб 0: Результаты + счётчик
+        n = self.table.rowCount()
+        self._sidebar.setTabText(0, f"Результаты ({n})" if n > 0 else "Результаты")
+
+        # Таб 2: Эксперт + бейдж с частотой
+        sig = getattr(self.expert_panel, "_signal", None)
+        if sig is not None:
+            mhz = sig.frequency_hz / 1e6
+            badge = f"{mhz/1000:.2f} ГГц" if mhz >= 1000 else f"{mhz:.1f}"
+            self._sidebar.setTabText(2, f"Эксперт · {badge}")
+            # Подсвечиваем вкладку акцентным цветом для визуального бейджа
+            self._sidebar.tabBar().setTabTextColor(
+                2, QColor(self._theme["btn_active"])
+            )
+        else:
+            self._sidebar.setTabText(2, "Эксперт")
+            # Сброс к стандартному цвету текста
+            self._sidebar.tabBar().setTabTextColor(2, QColor())
+
+    # ------------------------------------------------------------------
+    # Хелпер обновления статуса в action bar
+    # ------------------------------------------------------------------
+
+    def _set_status(self, title: str, text: str, icon: str = "◎") -> None:
+        """Устанавливает иконку, заголовок фазы и текст описания в action bar."""
+        self._lbl_status_icon.setText(icon)
+        self._lbl_status_title.setText(title.upper() if title else "")
+        self.lbl_instruction.setText(text)
+
+    # ------------------------------------------------------------------
+    # Панель параметров
+    # ------------------------------------------------------------------
+
+    def _create_settings_panel(self) -> QWidget:
+        box = QWidget()
+        layout = QHBoxLayout(box)
+        layout.setContentsMargins(14, 8, 14, 8)
+        layout.setSpacing(0)
+
+        def _field(label_text: str, widget) -> QWidget:
+            w = QWidget()
+            fl = QVBoxLayout(w)
+            fl.setContentsMargins(8, 0, 8, 0)
+            fl.setSpacing(2)
+            lbl = QLabel(label_text)
+            lbl.setObjectName("SettingsLabel")
+            fl.addWidget(lbl)
+            fl.addWidget(widget)
+            return w
+
+        def _sep() -> QWidget:
+            s = QFrame()
+            s.setFrameShape(QFrame.Shape.VLine)
+            s.setObjectName("SettingsSep")
+            s.setFixedWidth(1)
+            return s
+
+        def spin_d(min_v, max_v, val, step=1.0, decimals=1):
+            s = QDoubleSpinBox()
+            s.setRange(min_v, max_v)
+            s.setValue(val)
+            s.setSingleStep(step)
+            s.setDecimals(decimals)
+            return s
+
+        # ДИАПАЗОН — два спинбокса через стрелку
+        freq_field = QWidget()
+        freq_fl = QVBoxLayout(freq_field)
+        freq_fl.setContentsMargins(8, 0, 8, 0)
+        freq_fl.setSpacing(2)
+        freq_lbl = QLabel("ДИАПАЗОН, МГц")
+        freq_lbl.setObjectName("SettingsLabel")
+        freq_fl.addWidget(freq_lbl)
+        freq_row = QHBoxLayout()
+        freq_row.setSpacing(4)
+        self.spin_start_freq = spin_d(24, 1750, self.cfg.start_freq_hz / 1e6, 1.0, 2)
+        self.spin_stop_freq  = spin_d(25, 1750, self.cfg.stop_freq_hz  / 1e6, 1.0, 2)
+        _arrow = QLabel("→")
+        _arrow.setObjectName("SettingsArrow")
+        freq_row.addWidget(self.spin_start_freq)
+        freq_row.addWidget(_arrow)
+        freq_row.addWidget(self.spin_stop_freq)
+        freq_fl.addLayout(freq_row)
+        layout.addWidget(freq_field)
+
+        self.spin_start_freq.editingFinished.connect(self._clamp_freq_start)
+        self.spin_start_freq.valueChanged.connect(self._clamp_freq_start)
+        self.spin_stop_freq.editingFinished.connect(self._clamp_freq_stop)
+        self.spin_stop_freq.valueChanged.connect(self._clamp_freq_stop)
+
+        layout.addWidget(_sep())
+
+        # ПОРОГ
+        self.spin_threshold = spin_d(1.0, 40.0, self.cfg.threshold_db, 0.5, 1)
+        layout.addWidget(_field("ПОРОГ, дБ", self.spin_threshold))
+
+        layout.addWidget(_sep())
+
+        # УСИЛЕНИЕ
+        self.spin_gain = spin_d(0.0, 50.0, self.cfg.sdr_gain_db, 0.5, 1)
+        layout.addWidget(_field("УСИЛ, дБ", self.spin_gain))
+
+        layout.addWidget(_sep())
+
+        # AVG
+        self.spin_avg = QSpinBox()
+        self.spin_avg.setRange(1, 100)
+        self.spin_avg.setValue(self.cfg.averaging_count)
+        layout.addWidget(_field("AVG", self.spin_avg))
+
+        layout.addStretch(1)
+
+        # Чекбоксы — справа
+        self.chk_maxhold = QCheckBox("Уд. макс.")
+        self.chk_maxhold.setChecked(self.cfg.use_max_hold)
+        layout.addWidget(self.chk_maxhold)
+
+        self.chk_lock_bw = QCheckBox("Фикс. полосу")
+        self.chk_lock_bw.setChecked(True)
+        self.chk_lock_bw.setToolTip(
+            "В live-режиме зафиксировать ширину полосы SDR.\n"
+            "Разрешён только пан. Предотвращает лаги."
+        )
+        layout.addWidget(self.chk_lock_bw)
+
+        self._settings_widgets = [
+            self.spin_start_freq, self.spin_stop_freq, self.spin_threshold,
+            self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_lock_bw,
+        ]
+        return box
+
+    def _create_remote_panel(self) -> QWidget:
+        """Создаёт панель удалённого управления как QWidget (для вкладки сайдбара)."""
+        self._remote_box = QWidget()
+        remote_inner = QVBoxLayout(self._remote_box)
         remote_inner.setSpacing(5)
-        remote_inner.setContentsMargins(8, 4, 8, 8)
+        remote_inner.setContentsMargins(8, 8, 8, 8)
 
         # Строка 1: выбор режима
         mode_row = QHBoxLayout()
@@ -728,7 +1053,7 @@ class MainWindow(QMainWindow):
         addr_row = QHBoxLayout()
         addr_row.addWidget(QLabel("Адрес сервера:"))
         self._lbl_remote_addr = QLabel(self._remote_server.local_address)
-        self._lbl_remote_addr.setStyleSheet("color:#90CAF9; font-family:monospace;")
+        self._lbl_remote_addr.setStyleSheet("font-family: monospace;")
         addr_row.addWidget(self._lbl_remote_addr)
         addr_row.addStretch()
         remote_inner.addLayout(addr_row)
@@ -736,7 +1061,6 @@ class MainWindow(QMainWindow):
         # Строка 3: статус подключений + буфер
         status_row = QHBoxLayout()
         self._lbl_remote_clients = QLabel("Нет подключений")
-        self._lbl_remote_clients.setStyleSheet("color:#888;")
         status_row.addWidget(self._lbl_remote_clients)
         status_row.addStretch()
         self._lbl_settle = QLabel("Буфер:")
@@ -752,117 +1076,11 @@ class MainWindow(QMainWindow):
         self._spin_settle.setToolTip(
             "Рекомендуется ≥500 мс при Ethernet, ≥1000 мс при WiFi."
         )
-        self._spin_settle.setStyleSheet("""
-            QSpinBox { background:#333; color:#e0e0e0; border:1px solid #555;
-                       border-radius:3px; padding:1px 3px; min-width:75px; }
-        """)
         status_row.addWidget(self._spin_settle)
         remote_inner.addLayout(status_row)
-        control_layout.addWidget(remote_box)
-        # ──────────────────────────────────────────────────────────────
 
-        control_layout.addStretch(1)
-
-        self.btn_action = QPushButton("ПОДКЛЮЧИТЬ И НАЧАТЬ")
-        self.btn_action.setStyleSheet("""
-            QPushButton { background-color: #2b5a8c; color: white; font-weight: bold;
-                          padding: 12px; border-radius: 2px; font-size: 14px; border: none; }
-            QPushButton:hover { background-color: #1e3d5c; }
-            QPushButton:disabled { background-color: #4a4a4a; color: #888; }
-        """)
-        self.btn_action.clicked.connect(self._on_control_button_clicked)
-        control_layout.addWidget(self.btn_action)
-
-        bottom_section.addWidget(control_group, 1)
-        main_layout.addWidget(self._bottom_widget, 2)
-
-    # ------------------------------------------------------------------
-    # Панель параметров
-    # ------------------------------------------------------------------
-
-    def _create_settings_panel(self) -> QGroupBox:
-        box = QGroupBox("Параметры измерения")
-        box.setStyleSheet("""
-            QGroupBox { font-weight: bold; border: 1px solid #444; border-radius: 5px;
-                        margin-top: 10px; padding-top: 8px; color: #e0e0e0; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-            QDoubleSpinBox, QSpinBox {
-                background-color: #333; color: #e0e0e0; border: 1px solid #555;
-                border-radius: 3px; padding: 2px 4px; min-width: 70px;
-            }
-            QLabel { color: #ccc; font-size: 12px; }
-            QCheckBox { color: #ccc; font-size: 12px; }
-        """)
-
-        layout = QHBoxLayout(box)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(16)
-
-        def spin(min_v, max_v, val, step=1.0, decimals=1):
-            s = QDoubleSpinBox()
-            s.setRange(min_v, max_v)
-            s.setValue(val)
-            s.setSingleStep(step)
-            s.setDecimals(decimals)
-            return s
-
-        # Частота начала
-        layout.addWidget(QLabel("Нач. частота (МГц):"))
-        self.spin_start_freq = spin(24, 1750, self.cfg.start_freq_hz / 1e6, 1.0, 2)
-        layout.addWidget(self.spin_start_freq)
-
-        # Частота конца
-        layout.addWidget(QLabel("Кон. частота (МГц):"))
-        self.spin_stop_freq = spin(25, 1750, self.cfg.stop_freq_hz / 1e6, 1.0, 2)
-        layout.addWidget(self.spin_stop_freq)
-
-        self.spin_start_freq.editingFinished.connect(self._clamp_freq_start)
-        self.spin_start_freq.valueChanged.connect(self._clamp_freq_start)
-        self.spin_stop_freq.editingFinished.connect(self._clamp_freq_stop)
-        self.spin_stop_freq.valueChanged.connect(self._clamp_freq_stop)
-
-        # Порог обнаружения
-        layout.addWidget(QLabel("Порог (дБ):"))
-        self.spin_threshold = spin(1.0, 40.0, self.cfg.threshold_db, 0.5, 1)
-        layout.addWidget(self.spin_threshold)
-
-        # Усиление SDR
-        layout.addWidget(QLabel("Усиление SDR (дБ):"))
-        self.spin_gain = spin(0.0, 50.0, self.cfg.sdr_gain_db, 0.5, 1)
-        layout.addWidget(self.spin_gain)
-
-        # Количество усреднений
-        layout.addWidget(QLabel("Усредн.:"))
-        self.spin_avg = QSpinBox()
-        self.spin_avg.setRange(1, 100)
-        self.spin_avg.setValue(self.cfg.averaging_count)
-        self.spin_avg.setStyleSheet("""
-            QSpinBox { background-color: #333; color: #e0e0e0; border: 1px solid #555;
-                       border-radius: 3px; padding: 2px 4px; min-width: 55px; }
-        """)
-        layout.addWidget(self.spin_avg)
-
-        # MaxHold
-        self.chk_maxhold = QCheckBox("Уд. максимума")
-        self.chk_maxhold.setChecked(self.cfg.use_max_hold)
-        layout.addWidget(self.chk_maxhold)
-
-        # Фиксация полосы пропускания в live-режиме (только пан, зум запрещён)
-        self.chk_lock_bw = QCheckBox("Фиксировать полосу")
-        self.chk_lock_bw.setChecked(True)
-        self.chk_lock_bw.setToolTip(
-            "В live-режиме зафиксировать ширину полосы SDR.\n"
-            "Разрешён только пан. Предотвращает лаги."
-        )
-        layout.addWidget(self.chk_lock_bw)
-
-        layout.addStretch(1)
-
-        self._settings_widgets = [
-            self.spin_start_freq, self.spin_stop_freq, self.spin_threshold,
-            self.spin_gain, self.spin_avg, self.chk_maxhold, self.chk_lock_bw,
-        ]
-        return box
+        remote_inner.addStretch(1)
+        return self._remote_box
 
     @property
     def _FREQ_BW_MHZ(self) -> float:
@@ -1024,8 +1242,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _toggle_graph_fullscreen(self, fullscreen: bool) -> None:
-        self._top_bar.setVisible(not fullscreen)
-        self._bottom_widget.setVisible(not fullscreen)
+        self._action_bar.setVisible(not fullscreen)
+        self._settings_panel.setVisible(not fullscreen)
+        self._sidebar.setVisible(not fullscreen)
         # Синхронизируем кнопку в обоих виджетах без повторного эмита
         for w in (self.plot, self.live_widget, self.zero_span_widget):
             w.btn_fullscreen.blockSignals(True)
@@ -1523,12 +1742,10 @@ class MainWindow(QMainWindow):
         self._sync_live_marks()
         self._refresh_bookmark_table()
 
-        self.lbl_instruction.setText(
-            "<b>Прямой эфир активен</b><br>"
-            "<span style='color:#aaa'>"
-            "Параметры можно менять в реальном времени — спектр обновится автоматически.<br>"
-            "Поставьте метки для важных частот, затем нажмите<br>"
-            "<b>ЗАПУСТИТЬ ИЗМЕРЕНИЕ ПАНОРАМЫ</b></span>"
+        self._set_status(
+            "Прямой эфир",
+            "Параметры можно менять в реальном времени. Поставьте метки, затем нажмите «Запустить».",
+            icon="↻",
         )
 
     def _stop_panorama_preview(self) -> None:
@@ -1583,7 +1800,7 @@ class MainWindow(QMainWindow):
     def _start_workflow(self):
         self.current_step = "running"
         self._set_settings_enabled(False)
-        self.lbl_instruction.setText("<b>Запуск процесса...</b>")
+        self._set_status("Запуск", "Инициализация измерения...", icon="↻")
         self.btn_action.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.act_save.setEnabled(False)
@@ -1691,6 +1908,15 @@ class MainWindow(QMainWindow):
         else:
             self.plot.clear_highlight()
         self.expert_panel.set_signal(sig, idx)
+        self._refresh_sidebar_tab_titles()
+        # Автопереключение убрано — бейдж с частотой на табе Эксперт
+        # показывает оператору, какой сигнал загружен. Переход — по
+        # двойному клику (см. _on_table_double_clicked).
+
+    def _on_table_double_clicked(self, _item) -> None:
+        """Двойной клик по строке таблицы → переход в Эксперт-таб."""
+        if self.act_expert_mode.isChecked() or self.expert_panel._signal is not None:
+            self._sidebar.setCurrentIndex(2)
 
     def _on_live_graph_freq_clicked(self, freq_mhz: float) -> None:
         """При клике на live-графике (вне режима меток) — выделяем строку в таблице."""
@@ -2021,25 +2247,19 @@ class MainWindow(QMainWindow):
         else:
             title_color = t["text_dim"]
 
-        html_text = f"<b style='color: {title_color};'>{title}</b>"
-        html_text += f"<div style='line-height: 1.4; margin-top: 4px;'>{instruction.replace(chr(10), '<br>')}</div>"
-
-        self.lbl_instruction.setText(html_text)
+        # Двухстрочный статус: заголовок фазы + описание
+        self._lbl_status_title.setText(title.upper())
+        self._lbl_status_title.setStyleSheet(
+            f"color: {title_color}; font-size: 10px; letter-spacing: 0.08em;"
+        )
+        # Описание — простой текст без HTML-обёртки
+        plain_instruction = instruction.replace(chr(10), " ").strip()
+        self.lbl_instruction.setText(plain_instruction)
         self.btn_action.setText(btn_text)
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(True)
 
         # CSV/NPZ включаются только в экспертном режиме (_enter_expert_mode)
-
-
-        self.btn_action.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
-            f" font-weight: bold; padding: 12px; border-radius: 2px;"
-            f" font-size: 14px; border: none; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
-            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
-        )
 
         if self.wf and hasattr(self.wf, "signals"):
             self._update_table_only()
@@ -2078,24 +2298,9 @@ class MainWindow(QMainWindow):
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.enable_remeasure(False)
         self.expert_panel.enable_expert_mode(False)
-        self.expert_panel.setVisible(self.act_expert_mode.isChecked())
 
-        self.lbl_instruction.setText("Подключите SDR для начала работы.")
-        t = self._theme
-        self.lbl_instruction.setStyleSheet(
-            f"color: {t['text']}; font-size: 13px; padding: 10px;"
-            f" background-color: {t['bg_instruction']}; border: 1px solid {t['border']};"
-            f" border-radius: 4px;"
-        )
+        self._set_status("Готов", "Подключите SDR для начала работы.")
         self._set_scan_mode(self.scan_mode)   # восстанавливает текст кнопки
-        self.btn_action.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
-            f" font-weight: bold; padding: 12px; border-radius: 2px;"
-            f" font-size: 14px; border: none; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
-            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
-        )
         self.btn_action.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.act_save.setEnabled(False)
@@ -2155,6 +2360,7 @@ class MainWindow(QMainWindow):
 
     def _set_progress(self, value: int) -> None:
         """Плавно анимирует прогрессбар к целевому значению."""
+        self.prog.setVisible(True)
         self._prog_anim.stop()
         self._prog_anim.setStartValue(self.prog.value())
         self._prog_anim.setEndValue(value)
@@ -2164,20 +2370,18 @@ class MainWindow(QMainWindow):
         """Мгновенно сбрасывает прогрессбар в 0, останавливая текущую анимацию."""
         self._prog_anim.stop()
         self.prog.setValue(0)
+        self.prog.setVisible(False)
 
     def _on_thread_finished(self):
         # Вызывается только при нормальном завершении (при сбросе — отключается в _do_ui_reset)
         self.btn_stop.setEnabled(True)
         self._set_settings_enabled(True)
         self.btn_action.setText("НОВЫЙ ПОИСК")
-        t = self._theme
-        self.btn_action.setStyleSheet(
-            f"QPushButton {{ background-color: {t['btn_primary_bg']}; color: white;"
-            f" font-weight: bold; padding: 12px; border-radius: 2px;"
-            f" font-size: 14px; border: none; }}"
-            f" QPushButton:hover {{ background-color: {t['btn_primary_hover']}; }}"
-            f" QPushButton:disabled {{ background-color: {t['btn_bg']};"
-            f" color: {t['text_off']}; border: 1px solid {t['btn_border']}; }}"
+        n = self.table.rowCount()
+        self._set_status(
+            "Измерение завершено",
+            f"Обнаружено {n} сигнал{'ов' if n == 0 or n >= 5 else 'а' if n > 1 else ''}. Выберите строку для анализа.",
+            icon="◎",
         )
         if self.act_expert_mode.isChecked():
             self.current_step = "expert"
@@ -2193,7 +2397,6 @@ class MainWindow(QMainWindow):
 
     def _on_expert_mode_toggled(self, checked: bool) -> None:
         """Реакция на включение/выключение «Экспертного режима» в меню."""
-        self.expert_panel.setVisible(checked)
         # Кнопки меток — только в экспертном режиме
         if self.current_step == "live_preview":
             # Во время предпросмотра — live_widget
@@ -2210,6 +2413,9 @@ class MainWindow(QMainWindow):
         else:
             if self.current_step == "expert":
                 self._exit_expert_mode()
+        # Switch sidebar tab to Expert when enabled with signal selected, else Results
+        if checked and self.table.selectedItems():
+            self._sidebar.setCurrentIndex(2)
 
     def _exit_expert_mode(self) -> None:
         """Выйти из экспертного режима без сброса результатов измерения."""
@@ -2328,15 +2534,30 @@ class MainWindow(QMainWindow):
 
     def _update_remote_status(self, count: int) -> None:
         self._lbl_remote_addr.setText(self._remote_server.local_address)
+        addr = self._remote_server.local_address
+        # strip protocol prefix for pill display
+        ip = addr.split("//")[-1] if "//" in addr else addr
         if count == 0:
             self._lbl_remote_clients.setText("Нет подключений")
             self._lbl_remote_clients.setStyleSheet(
                 f"color: {self._theme['clients_off']};"
             )
+            self._pill_clients.setText("● Нет клиентов")
+            self._pill_clients.setStyleSheet(
+                f"QLabel#AppPill {{ color: {self._theme['text_muted']}; font-size: 12px;"
+                f" padding: 4px 10px; border-radius: 999px;"
+                f" background: {self._theme['bg_input']}; border: 1px solid {self._theme['border']}; }}"
+            )
         else:
             noun = "клиент" if count == 1 else ("клиента" if count < 5 else "клиентов")
             self._lbl_remote_clients.setText(f"{count} {noun}")
             self._lbl_remote_clients.setStyleSheet("color:#66BB6A;")
+            self._pill_clients.setText(f"● {count} {noun} · {ip}")
+            self._pill_clients.setStyleSheet(
+                f"QLabel#AppPill {{ color: {self._theme['tbl_status_ok']}; font-size: 12px;"
+                f" padding: 4px 10px; border-radius: 999px;"
+                f" background: {self._theme['bg_input']}; border: 1px solid {self._theme['border']}; }}"
+            )
 
     def _on_test_activate(self, active: bool) -> None:
         """Активирует/деактивирует тест: DemoSimulator + remote clients."""
