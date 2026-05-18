@@ -965,7 +965,7 @@ class MainWindow(QMainWindow):
         if sig is not None:
             mhz = sig.frequency_hz / 1e6
             badge = f"{mhz/1000:.2f} ГГц" if mhz >= 1000 else f"{mhz:.1f}"
-            self._sidebar.setTabText(2, f"Экспертный\nанализ · {badge}")
+            self._sidebar.setTabText(2, f"Экспертный\nанализ\n{badge}")
             # Подсвечиваем вкладку акцентным цветом для визуального бейджа
             self._sidebar.tabBar().setTabTextColor(
                 2, QColor(self._theme["btn_active"])
@@ -1657,7 +1657,10 @@ class MainWindow(QMainWindow):
         if is_expert:
             act_del = menu.addAction("Удалить сигнал")
             if menu.exec(self.table.viewport().mapToGlobal(pos)) == act_del:
-                self._delete_signal(row)
+                freq_mhz = freq_hz / 1e6
+                if _dlg.question(self, "Удалить сигнал",
+                                 f"Удалить сигнал {freq_mhz:.4f} МГц из таблицы и графика?"):
+                    self._delete_signal(row)
             return
 
         # Не экспертный режим — удаляем только метки (закладки)
@@ -1763,8 +1766,12 @@ class MainWindow(QMainWindow):
         self._spectrum_stack.setCurrentIndex(2)
         self.live_widget.clear()
         self.expert_panel.set_zero_span_active(False)
-        self.expert_panel.enable_remeasure(False)
-        self.expert_panel.enable_expert_mode(False)
+        self.expert_panel.set_instrument(self.ctrl)
+        self._sync_expert_panel()
+        self.expert_panel.set_stage_hint(
+            "Идёт предпросмотр прямого эфира.\n"
+            "Расставленные метки используются как закладки для измерения."
+        )
         # Кнопки меток — сразу применяем текущее состояние экспертного режима
         self.live_widget.set_mark_available(self.act_expert_mode.isChecked())
 
@@ -1876,8 +1883,11 @@ class MainWindow(QMainWindow):
         self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.set_zero_span_active(False)
         self.expert_panel.set_instrument(self.ctrl)
-        self.expert_panel.enable_remeasure(False)
-        self.expert_panel.enable_expert_mode(False)
+        self._sync_expert_panel()
+        self.expert_panel.set_stage_hint(
+            "Идёт измерение панорамы.\n"
+            "Экспертный анализ будет доступен после завершения."
+        )
 
         self.plot.clear()
         # Показываем метки в таблице пока идёт фаза 1 (до обнаружения сигналов)
@@ -1937,10 +1947,28 @@ class MainWindow(QMainWindow):
             try:
                 freq_mhz = float(freq_item.text())
                 self.live_widget.highlight_mark(freq_mhz)
-                vb = self.live_widget._pw.getPlotItem().getViewBox()
-                x_range = vb.viewRange()[0]
-                half_span = max((x_range[1] - x_range[0]) / 2, 1.0)
-                vb.setXRange(freq_mhz - half_span, freq_mhz + half_span, padding=0)
+                # Обновить экспертную панель закладкой если экспертный режим активен
+                if self.act_expert_mode.isChecked():
+                    bookmarks = [
+                        PEMINSignal(
+                            frequency_hz=f,
+                            amplitude_diff_db=0.0,
+                            amplitude_on_db=0.0,
+                            amplitude_off_db=0.0,
+                            rbw_hz=0.0,
+                            detection_method="bookmark",
+                        )
+                        for f in self._bookmark_freqs_hz
+                    ]
+                    idx = next(
+                        (i for i, s in enumerate(bookmarks)
+                         if abs(s.frequency_hz / 1e6 - freq_mhz) < 0.01),
+                        -1
+                    )
+                    if idx >= 0:
+                        self.expert_panel.set_signal(bookmarks[idx], idx)
+                        self.expert_panel.enable_expert_mode(True)
+                        self._refresh_sidebar_tab_titles()
             except (ValueError, AttributeError):
                 pass
             return
@@ -2000,9 +2028,7 @@ class MainWindow(QMainWindow):
             if item:
                 try:
                     if abs(float(item.text()) - target_mhz) < 0.01:
-                        self.table.blockSignals(True)
                         self.table.selectRow(row)
-                        self.table.blockSignals(False)
                         break
                 except ValueError:
                     pass
@@ -2015,7 +2041,7 @@ class MainWindow(QMainWindow):
         self.zero_span_widget.set_running(True)
         self._spectrum_stack.setCurrentIndex(1)
         self._zs_start_worker(freq_hz)
-        self.expert_panel.enable_remeasure(False)
+        self.expert_panel.enable_remeasure(False)   # zero-span занимает SDR
 
     def _zs_start_worker(self, freq_hz: float) -> None:
         from copy import copy
@@ -2049,10 +2075,14 @@ class MainWindow(QMainWindow):
         self._stop_zero_span()
         self._zs_freq_hz = None
         self.zero_span_widget.set_running(True)   # сброс кнопок для следующего запуска
-        self._spectrum_stack.setCurrentIndex(0)
+        # Возвращаемся к live_widget если были в предпросмотре, иначе к панораме
+        if self.current_step == "live_preview":
+            self._spectrum_stack.setCurrentIndex(2)
+            self.live_widget.reset_view()
+        else:
+            self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.set_zero_span_active(False)
-        if self.current_step in ("idle", "expert"):
-            self.expert_panel.enable_remeasure(True)
+        self._sync_expert_panel()
 
     def _on_zero_span_error(self, msg: str) -> None:
         self._stop_zero_span()
@@ -2362,8 +2392,8 @@ class MainWindow(QMainWindow):
         self._spectrum_stack.setCurrentIndex(0)
         self.expert_panel.clear_signal()
         self.expert_panel.set_zero_span_active(False)
-        self.expert_panel.enable_remeasure(False)
-        self.expert_panel.enable_expert_mode(False)
+        self.expert_panel.clear_signal()
+        self._sync_expert_panel()
 
         self._set_status("Готов", "Подключите SDR для начала работы.")
         self._set_scan_mode(self.scan_mode)   # восстанавливает текст кнопки
@@ -2458,8 +2488,21 @@ class MainWindow(QMainWindow):
         self._reset_progress()
 
     # ------------------------------------------------------------------
-    # Экспертный режим (после завершения всех измерений)
+    # Экспертный режим
     # ------------------------------------------------------------------
+
+    def _sync_expert_panel(self) -> None:
+        """Синхронизирует состояние кнопок экспертной панели с текущим режимом.
+
+        Вызывается при смене этапа — гарантирует, что кнопки работают
+        на всех этапах когда включён экспертный режим.
+        """
+        active = self.act_expert_mode.isChecked()
+        ctrl_ok = getattr(self.ctrl, "is_connected", False)
+        self.expert_panel.enable_expert_mode(active)
+        self.expert_panel.enable_remeasure(active and ctrl_ok)
+        if active:
+            self.expert_panel.set_threshold(self.cfg.threshold_db)
 
     def _on_expert_mode_toggled(self, checked: bool) -> None:
         """Реакция на включение/выключение «Экспертного режима» в меню."""
@@ -2481,6 +2524,9 @@ class MainWindow(QMainWindow):
                 self.current_step = "expert"
                 self._enter_expert_mode()
         else:
+            # Явно скрываем метки во всех возможных состояниях
+            self.live_widget.set_mark_available(False)
+            self.plot.set_mark_buttons_visible(False)
             if self.current_step == "expert":
                 self._exit_expert_mode()
         # Switch sidebar tab to Expert when enabled with signal selected, else Results
@@ -2492,7 +2538,7 @@ class MainWindow(QMainWindow):
         self.current_step = "idle"
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.act_save.setEnabled(False)
-        self.expert_panel.enable_expert_mode(False)
+        self._sync_expert_panel()
         self.plot.set_mark_buttons_visible(False)
         self.live_widget.set_mark_available(False)
 
@@ -2507,6 +2553,7 @@ class MainWindow(QMainWindow):
         self.expert_panel.enable_remeasure(True)
         self.expert_panel.enable_expert_mode(True)
         self.expert_panel.set_threshold(self.cfg.threshold_db)
+        self.expert_panel.set_stage_hint("")   # убираем хинт — режим полностью активен
         # Кнопки меток — только в экспертном режиме
         self.plot.set_mark_buttons_visible(True)
         self.live_widget.set_mark_available(True)
@@ -2564,6 +2611,27 @@ class MainWindow(QMainWindow):
 
     def _on_expert_delete_requested(self) -> None:
         """Обработчик кнопки «Удалить сигнал» из expert_panel."""
+        sig = getattr(self.expert_panel, "_signal", None)
+        if sig is None:
+            return
+        freq_mhz = sig.frequency_hz / 1e6
+
+        # Режим live_preview — удаляем из закладок
+        if self.current_step == "live_preview":
+            if _dlg.question(self, "Удалить метку",
+                             f"Удалить метку {freq_mhz:.4f} МГц?"):
+                self._bookmark_freqs_hz = [
+                    f for f in self._bookmark_freqs_hz
+                    if abs(f - sig.frequency_hz) >= 100e3
+                ]
+                remaining = [f / 1e6 for f in self._bookmark_freqs_hz]
+                self.live_widget.set_marks(remaining)
+                self.expert_panel.clear_signal()
+                self._refresh_bookmark_table()
+                self._refresh_sidebar_tab_titles()
+            return
+
+        # Обычный режим — удаляем из wf.signals
         if not (self.wf and hasattr(self.wf, "signals")):
             return
         selected = self.table.selectedItems()
@@ -2572,9 +2640,11 @@ class MainWindow(QMainWindow):
         row = selected[0].row()
         if row < 0 or row >= len(self.wf.signals):
             return
-        sig = self.wf.signals[row]
         if _dlg.question(self, "Удалить сигнал",
-                         f"Удалить {sig.frequency_hz / 1e6:.4f} МГц из таблицы?"):
+                         f"Удалить {freq_mhz:.4f} МГц из таблицы?"):
+            # Если открыт нулевой обзор для этого сигнала — закрываем его
+            if self._zs_freq_hz is not None:
+                self._on_zero_span_stop()
             self._delete_signal(row)
 
     # ------------------------------------------------------------------

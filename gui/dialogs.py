@@ -1,7 +1,7 @@
 """Локализованные диалоговые окна в стиле приложения."""
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QDialogButtonBox, QInputDialog,
-                              QMessageBox)
+                              QMessageBox, QFrame)
 from PyQt6.QtCore import Qt
 
 
@@ -78,7 +78,19 @@ class _MsgDialog(QDialog):
         self.setMinimumWidth(440)
         self.setStyleSheet(_style(t))
 
-        root = QVBoxLayout(self)
+        # Внешний layout без отступов — рамка вплотную к краям окна
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Рамка с видимой границей (особенно важно для светлой темы)
+        frame = QFrame()
+        frame.setStyleSheet(
+            f"QFrame {{ border: 1px solid {t['border_input']}; background: {t['bg_widget']}; }}"
+        )
+        outer.addWidget(frame)
+
+        root = QVBoxLayout(frame)
         root.setSpacing(20)
         root.setContentsMargins(24, 20, 24, 16)
 

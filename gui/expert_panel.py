@@ -180,9 +180,9 @@ class ExpertPanel(QWidget):
         remeasure_row.setColumnStretch(1, 1)
         remeasure_row.setColumnStretch(2, 1)
 
-        self._btn_essh   = QPushButton("♪ Сигнал")
-        self._btn_esh    = QPushButton("♪ Шум")
-        self._btn_peak   = QPushButton("⊕ Частоту")
+        self._btn_essh   = QPushButton("Сигнал")
+        self._btn_esh    = QPushButton("Шум")
+        self._btn_peak   = QPushButton("Частоту")
         for b, tip, mode in (
             (self._btn_essh, "Переизмерить уровень сигнала (устройство включено)", "signal"),
             (self._btn_esh,  "Переизмерить уровень фонового шума (устройство выключено)", "noise"),
@@ -208,7 +208,7 @@ class ExpertPanel(QWidget):
         self._sec_watch.setObjectName("ExpertSection")
         root.addWidget(self._sec_watch)
 
-        self._btn_zero_span = QPushButton("▷ Zero Span + ♪ Аудио")
+        self._btn_zero_span = QPushButton("Нулевой обзор + Аудио")
         self._btn_zero_span.setObjectName("ExpertBtn")
         self._btn_zero_span.setCheckable(True)
         self._btn_zero_span.setToolTip(
@@ -227,6 +227,14 @@ class ExpertPanel(QWidget):
         root.addWidget(self._btn_delete)
 
         root.addStretch(1)
+
+        # ── Пояснение для неактивных этапов ──────────────────────────
+        self._lbl_stage_hint = QLabel("")
+        self._lbl_stage_hint.setObjectName("ExpertStageHint")
+        self._lbl_stage_hint.setWordWrap(True)
+        self._lbl_stage_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_stage_hint.setVisible(False)
+        root.addWidget(self._lbl_stage_hint)
 
     # ==================================================================
     # Theme
@@ -292,9 +300,25 @@ class ExpertPanel(QWidget):
             f"#ExpertHint {{ color: {t['text_dim']}; font-size: 11px;"
             f" font-style: italic; padding: 2px 0; }}"
         )
+        stage_hint_qss = (
+            f"#ExpertStageHint {{ color: {t['text_muted']}; font-size: 11px;"
+            f" font-style: italic; padding: 6px 8px;"
+            f" background: {t['bg_input']}; border-radius: 4px; }}"
+        )
 
-        self.setStyleSheet(section_qss + btn_qss + delete_qss + progress_qss + hint_qss)
+        self.setStyleSheet(section_qss + btn_qss + delete_qss + progress_qss + hint_qss + stage_hint_qss)
         self._update_display()
+
+    def set_stage_hint(self, text: str) -> None:
+        """Показывает или скрывает пояснение внизу панели.
+
+        Пустая строка — скрыть подсказку.
+        """
+        if text:
+            self._lbl_stage_hint.setText(text)
+            self._lbl_stage_hint.setVisible(True)
+        else:
+            self._lbl_stage_hint.setVisible(False)
 
     # ==================================================================
     # Публичный API (без изменений)
@@ -334,7 +358,7 @@ class ExpertPanel(QWidget):
     def set_zero_span_active(self, active: bool) -> None:
         self._btn_zero_span.setChecked(active)
         self._btn_zero_span.setText(
-            "■ Остановить мониторинг" if active else "▷ Zero Span + ♪ Аудио"
+            "Остановить мониторинг" if active else "Нулевой обзор + Аудио"
         )
 
     # ==================================================================

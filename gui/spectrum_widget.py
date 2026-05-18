@@ -416,7 +416,14 @@ class SpectrumPlotWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _add_panorama_mark(self, freq_mhz: float) -> None:
-        
+        # Запрет меток вне диапазона отрисованных данных
+        if self._freq_range_mhz is not None:
+            x_min, x_max = self._freq_range_mhz
+            if not (x_min <= freq_mhz <= x_max):
+                return
+        elif self._freq_range_mhz is None:
+            return   # данных ещё нет совсем
+
         if any(abs(line.value() - freq_mhz) < self._MIN_MARK_SPACING_MHZ
                for line in self._panorama_marks):
             return  # метка слишком близко к существующей — игнорируем

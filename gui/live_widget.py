@@ -664,6 +664,10 @@ class LiveWidget(QWidget):
             self.freq_selected.emit(freq_mhz)
 
     def _add_mark(self, freq_mhz: float) -> None:
+        # Запрет меток вне диапазона отрисованных данных
+        if (self._last_data_max <= self._last_data_min
+                or not (self._last_data_min <= freq_mhz <= self._last_data_max)):
+            return
         if any(abs(f - freq_mhz) < self._MIN_MARK_SPACING_MHZ
                for f in self.marked_freqs_mhz):
             return
