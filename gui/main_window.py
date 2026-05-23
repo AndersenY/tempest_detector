@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
 
         # Меню-кнопки
         self._menu_btns: dict[str, QPushButton] = {}
-        for name in ("Режим", "Действие", "Устройство", "Вид"):
+        for name in ("Режим", "Действие", "Устройство"):
             btn = QPushButton(name)
             btn.setObjectName("AppMenuBtn")
             btn.setFlat(True)
@@ -401,12 +401,6 @@ class MainWindow(QMainWindow):
         hw_group.addAction(self.act_hw_hackrf)
         menu_hw.addAction(self.act_hw_hackrf)
 
-        # ── Вид ───────────────────────────────────────────────────────
-        menu_view = QMenu(self)
-        self._menu_btns["Вид"].clicked.connect(
-            lambda: menu_view.exec(self._menu_btns["Вид"].mapToGlobal(
-                self._menu_btns["Вид"].rect().bottomLeft()))
-        )
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
 
@@ -415,18 +409,15 @@ class MainWindow(QMainWindow):
         self.act_theme_dark.setChecked(True)
         self.act_theme_dark.triggered.connect(lambda: self.apply_theme(DARK))
         theme_group.addAction(self.act_theme_dark)
-        menu_view.addAction(self.act_theme_dark)
 
         self.act_theme_light = QAction("Светлая тема", self)
         self.act_theme_light.setCheckable(True)
         self.act_theme_light.triggered.connect(lambda: self.apply_theme(LIGHT))
         theme_group.addAction(self.act_theme_light)
-        menu_view.addAction(self.act_theme_light)
         # Сохранить ссылки на меню для apply_theme
         self._menu_mode = menu_mode
         self._menu_action_menu = menu_action
         self._menu_hw = menu_hw
-        self._menu_view = menu_view
 
     def _set_scan_mode(self, mode: str):
         # Смена режима во время активной сессии → сбрасываем всё.
@@ -597,7 +588,7 @@ class MainWindow(QMainWindow):
             f" border: 1px solid {t['border']}; }}"
             f" QPushButton#AppMenuBtn:pressed {{ background: {t['border']}; }}"
             f" QLabel#AppPill {{ color: {t['text_dim']}; font-size: 12px;"
-            f" padding: 4px 12px; border-radius: 999px;"
+            f" padding: 4px 12px; border-radius: 11px;"
             f" background: {t['bg_input']}; border: 1px solid {t['border']}; }}"
             f" QPushButton#AppIconBtn {{ background: transparent; color: {t['text_dim']};"
             f" font-size: 16px; border: none; border-radius: 6px; }}"
@@ -615,7 +606,7 @@ class MainWindow(QMainWindow):
             f" QMenu::item:selected {{ background-color: {t['menu_sel']}; color: {t['text']}; }}"
             f" QMenu::separator {{ height: 1px; background: {t['menu_bdr']}; margin: 4px 0; }}"
         )
-        for menu in (self._menu_mode, self._menu_action_menu, self._menu_hw, self._menu_view):
+        for menu in (self._menu_mode, self._menu_action_menu, self._menu_hw):
             menu.setStyleSheet(_menu_qss)
 
         # Прогресс-бар — прозрачный фон, видна только заливка chunk
@@ -2832,7 +2823,7 @@ class MainWindow(QMainWindow):
             self._pill_clients.setText("● Нет клиентов")
             self._pill_clients.setStyleSheet(
                 f"QLabel#AppPill {{ color: {self._theme['text_muted']}; font-size: 12px;"
-                f" padding: 4px 10px; border-radius: 999px;"
+                f" padding: 4px 10px; border-radius: 11px;"
                 f" background: {self._theme['bg_input']}; border: 1px solid {self._theme['border']}; }}"
             )
         else:
@@ -2842,7 +2833,7 @@ class MainWindow(QMainWindow):
             self._pill_clients.setText(f"● {count} {noun} · {ip}")
             self._pill_clients.setStyleSheet(
                 f"QLabel#AppPill {{ color: {self._theme['tbl_status_ok']}; font-size: 12px;"
-                f" padding: 4px 10px; border-radius: 999px;"
+                f" padding: 4px 10px; border-radius: 11px;"
                 f" background: {self._theme['bg_input']}; border: 1px solid {self._theme['border']}; }}"
             )
             self._send_client_settings_if_enabled()
