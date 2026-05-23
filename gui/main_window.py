@@ -638,7 +638,7 @@ class MainWindow(QMainWindow):
         _act_color = t["btn_active"]
         _th_color  = t["text_dim"]
         self._lbl_status_icon.setPixmap(make_pixmap(TARGET, _act_color, 18))
-        self._logo_lbl.setPixmap(make_pixmap(ANTENNA, "#ffffff", 14))
+        self._logo_lbl.setPixmap(make_pixmap(ANTENNA, "#ffffff", 16))
         self._btn_theme_toggle.setIcon(
             make_icon(SUN if t["name"] == "dark" else MOON, _th_color, 16)
         )

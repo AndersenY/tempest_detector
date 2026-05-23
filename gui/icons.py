@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt
 
 # ── SVG-иконки ────────────────────────────────────────────────────────────────
 
-ANTENNA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 11v10"/><path d="M8 21h8"/><path d="M9 9a4 4 0 0 1 6 0"/><path d="M6.5 6.5a8 8 0 0 1 11 0"/><circle cx="12" cy="10" r="1" fill="currentColor" stroke="none"/></svg>'
+ANTENNA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 16.1v4.7"/><path d="M8.4 20.8h7.2"/><path d="M8.5 8.2c2-2.1 5-2.1 7 0"/><path d="M6 5.9c3.5-3.5 8.5-3.5 12 0"/><circle cx="12" cy="12.6" r="1.75" fill="currentColor" stroke="none"/></svg>'
 
 SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
 
