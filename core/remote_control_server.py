@@ -5,6 +5,7 @@ TCP-сервер удалённого управления тестовым кл
   {"cmd": "test_start"}  — включить тестовый сигнал
   {"cmd": "test_stop"}   — выключить тестовый сигнал
   {"cmd": "ping"}        — проверка связи
+  {"cmd": "client_settings", ...} — применить настройки тестового клиента
 
 Клиент → Детектор:
   {"status": "ack", "active": true/false}
@@ -33,6 +34,7 @@ class RemoteControlServer:
         self._running = False
         self._port: int = PORT_DEFAULT
         self._current_mode: str = "manual"
+        self._client_settings: dict | None = None
         self.on_client_count_changed: Callable[[int], None] = lambda n: None
 
         # ACK-синхронизация: сервер ждёт подтверждения от всех клиентов
@@ -99,6 +101,14 @@ class RemoteControlServer:
         """Обновить режим и уведомить всех подключённых клиентов."""
         self._current_mode = mode
         self._broadcast({"cmd": "mode", "mode": mode})
+        if mode != "manual" and self._client_settings is not None:
+            self.send_client_settings(self._client_settings)
+
+    def send_client_settings(self, settings: dict) -> int:
+        """Отправить параметры тестового клиента всем подключённым клиентам."""
+        self._client_settings = dict(settings)
+        msg = {"cmd": "client_settings", **self._client_settings}
+        return self._broadcast(msg)
 
     def send_test_start(self) -> int:
         self._reset_acks()
@@ -158,6 +168,10 @@ class RemoteControlServer:
             self.on_client_count_changed(len(self._clients))
             try:
                 conn.sendall((json.dumps({"cmd": "ping", "mode": self._current_mode}) + "\n").encode())
+                if self._current_mode != "manual" and self._client_settings is not None:
+                    conn.sendall(
+                        (json.dumps({"cmd": "client_settings", **self._client_settings}) + "\n").encode()
+                    )
             except OSError:
                 pass
             threading.Thread(

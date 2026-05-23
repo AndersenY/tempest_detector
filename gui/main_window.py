@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QApplication, QFileDialog, QDoubleSpinBox, QSpinBox,
                              QCheckBox, QStackedWidget, QComboBox, QTabWidget,
                              QStyledItemDelegate, QAbstractItemDelegate, QFrame, QMenu,
-                             QSizePolicy)
+                             QSizePolicy, QLineEdit, QFormLayout)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt6.QtGui import QColor, QAction, QActionGroup, QIcon
 from core.config import PanoramaConfig
@@ -657,7 +657,7 @@ class MainWindow(QMainWindow):
         # Панель удалённого управления
         self._remote_box.setStyleSheet(
             f"QLabel {{ color: {t['text_dim']}; font-size: 12px; }}"
-            f" QSpinBox, QComboBox {{ background: {t['bg_input']}; color: {t['text']};"
+            f" QSpinBox, QComboBox, QLineEdit {{ background: {t['bg_input']}; color: {t['text']};"
             f" border: 1px solid {t['border_input']}; border-radius: 4px; padding: 2px 4px; }}"
             f" QComboBox::drop-down {{ border: none; }}"
             f" QComboBox QAbstractItemView {{ background: {t['bg_widget']}; color: {t['text']};"
@@ -1114,7 +1114,6 @@ class MainWindow(QMainWindow):
         v.addWidget(self._combo_mode)
 
         # ── Секция: Сервер ─────────────────────────────────────────────
-        from PyQt6.QtWidgets import QFormLayout
         sec_server = QLabel("СЕРВЕР")
         sec_server.setObjectName("SidebarSection")
         v.addWidget(sec_server)
@@ -1140,6 +1139,82 @@ class MainWindow(QMainWindow):
         form.addRow("Клиенты:", self._lbl_remote_clients)
         form.addRow("Буфер:",   self._spin_settle)
         v.addLayout(form)
+
+        self._sec_client_settings = QLabel("НАСТРОЙКИ КЛИЕНТА")
+        self._sec_client_settings.setObjectName("SidebarSection")
+        v.addWidget(self._sec_client_settings)
+
+        self._client_settings_box = QWidget()
+        client_form = QFormLayout(self._client_settings_box)
+        client_form.setSpacing(6)
+        client_form.setContentsMargins(0, 0, 0, 0)
+
+        self._combo_client_tab = QComboBox()
+        self._combo_client_tab.addItem("Монитор", "monitor")
+        self._combo_client_tab.addItem("Клавиатура", "keyboard")
+        self._combo_client_tab.addItem("Принтер", "printer")
+        self._combo_client_tab.setToolTip(
+            "Какая вкладка клиента будет активна при удалённом запуске теста."
+        )
+
+        self._spin_client_stripe = QSpinBox()
+        self._spin_client_stripe.setRange(1, 256)
+        self._spin_client_stripe.setValue(32)
+        self._spin_client_stripe.setSuffix(" px")
+
+        self._spin_client_blink = QSpinBox()
+        self._spin_client_blink.setRange(50, 5000)
+        self._spin_client_blink.setValue(500)
+        self._spin_client_blink.setSuffix(" мс")
+
+        self._spin_client_key_interval = QSpinBox()
+        self._spin_client_key_interval.setRange(10, 500)
+        self._spin_client_key_interval.setValue(50)
+        self._spin_client_key_interval.setSuffix(" мс")
+
+        self._edit_client_printer_port = QLineEdit()
+        self._edit_client_printer_port.setPlaceholderText("auto / LPT1 / имя принтера")
+        self._edit_client_printer_port.setMaximumWidth(160)
+
+        self._spin_client_printer_interval = QSpinBox()
+        self._spin_client_printer_interval.setRange(50, 2000)
+        self._spin_client_printer_interval.setValue(200)
+        self._spin_client_printer_interval.setSuffix(" мс")
+
+        self._client_settings_rows = {}
+
+        def add_client_row(key: str, label_text: str, field: QWidget) -> None:
+            label = QLabel(label_text)
+            client_form.addRow(label, field)
+            self._client_settings_rows[key] = (label, field)
+
+        add_client_row("test", "Тест:", self._combo_client_tab)
+        add_client_row("monitor_stripe", "Полоса:", self._spin_client_stripe)
+        add_client_row("monitor_blink", "Инверсия:", self._spin_client_blink)
+        add_client_row("keyboard_interval", "Клавиши:", self._spin_client_key_interval)
+        add_client_row("printer_port", "Порт:", self._edit_client_printer_port)
+        add_client_row("printer_interval", "Печать:", self._spin_client_printer_interval)
+        v.addWidget(self._client_settings_box)
+
+        self._client_settings_controls = [
+            self._combo_client_tab,
+            self._spin_client_stripe,
+            self._spin_client_blink,
+            self._spin_client_key_interval,
+            self._edit_client_printer_port,
+            self._spin_client_printer_interval,
+        ]
+        self._combo_client_tab.currentIndexChanged.connect(self._on_client_test_changed)
+        for w in (
+            self._spin_client_stripe,
+            self._spin_client_blink,
+            self._spin_client_key_interval,
+            self._spin_client_printer_interval,
+        ):
+            w.valueChanged.connect(self._send_client_settings_if_enabled)
+        self._edit_client_printer_port.editingFinished.connect(self._send_client_settings_if_enabled)
+        self._update_client_settings_visibility()
+        self._set_client_settings_enabled(False)
 
         v.addStretch(1)
         return self._remote_box
@@ -2656,6 +2731,68 @@ class MainWindow(QMainWindow):
         """Текущий режим: 'manual' | 'semi_auto' | 'auto'."""
         return self._combo_mode.currentData()
 
+    def _client_settings_payload(self) -> dict:
+        """Текущие параметры, которыми сервер управляет на тестовом клиенте."""
+        return {
+            "active_tab": self._combo_client_tab.currentData(),
+            "tabs": {
+                "monitor": {
+                    "stripe_px": self._spin_client_stripe.value(),
+                    "blink_ms": self._spin_client_blink.value(),
+                },
+                "keyboard": {
+                    "interval_ms": self._spin_client_key_interval.value(),
+                },
+                "printer": {
+                    "port": self._edit_client_printer_port.text().strip(),
+                    "interval_ms": self._spin_client_printer_interval.value(),
+                },
+            },
+        }
+
+    def _set_client_settings_enabled(self, enabled: bool) -> None:
+        for w in getattr(self, "_client_settings_controls", []):
+            w.setEnabled(enabled)
+
+    def _set_client_settings_row_visible(self, key: str, visible: bool) -> None:
+        row = getattr(self, "_client_settings_rows", {}).get(key)
+        if row is None:
+            return
+        label, field = row
+        label.setVisible(visible)
+        field.setVisible(visible)
+
+    def _update_client_settings_visibility(self) -> None:
+        mode = self._control_mode
+        show_client_settings = mode in ("semi_auto", "auto")
+        self._sec_client_settings.setVisible(show_client_settings)
+        self._client_settings_box.setVisible(show_client_settings)
+        if not show_client_settings:
+            return
+
+        active_tab = self._combo_client_tab.currentData()
+        visible_rows = {
+            "test",
+            "monitor_stripe",
+            "monitor_blink",
+        }
+        if active_tab == "keyboard":
+            visible_rows = {"test", "keyboard_interval"}
+        elif active_tab == "printer":
+            visible_rows = {"test", "printer_port", "printer_interval"}
+
+        for key in self._client_settings_rows:
+            self._set_client_settings_row_visible(key, key in visible_rows)
+
+    def _on_client_test_changed(self, *_) -> None:
+        self._update_client_settings_visibility()
+        self._send_client_settings_if_enabled()
+
+    def _send_client_settings_if_enabled(self, *_) -> None:
+        if self._control_mode == "manual":
+            return
+        self._remote_server.send_client_settings(self._client_settings_payload())
+
     def _on_mode_changed(self, _: int) -> None:
         mode = self._control_mode
         if mode != "manual" and self._remote_server.client_count == 0:
@@ -2672,7 +2809,11 @@ class MainWindow(QMainWindow):
             mode = "manual"
         enabled = (mode != "manual")
         self._spin_settle.setEnabled(enabled)
+        self._set_client_settings_enabled(enabled)
+        self._update_client_settings_visibility()
         self._remote_server.set_mode(mode)
+        if enabled:
+            self._remote_server.send_client_settings(self._client_settings_payload())
 
     def _on_remote_client_count(self, count: int) -> None:
         # Вызывается из фонового потока — emit через signal безопасен
@@ -2704,6 +2845,7 @@ class MainWindow(QMainWindow):
                 f" padding: 4px 10px; border-radius: 999px;"
                 f" background: {self._theme['bg_input']}; border: 1px solid {self._theme['border']}; }}"
             )
+            self._send_client_settings_if_enabled()
 
     def _on_test_activate(self, active: bool) -> None:
         """Активирует/деактивирует тест: DemoSimulator + remote clients."""
