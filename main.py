@@ -19,7 +19,7 @@ if sys.platform == "win32":
         os.add_dll_directory(_lib_dir)
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QIcon
+from core.app_icon import app_icon
 from gui.main_window import MainWindow
 
 
@@ -46,7 +46,7 @@ def main():
         _install_desktop_entry()
     app = QApplication(sys.argv)
     app.setDesktopFileName("pemin-detector")
-    _icon = QIcon(os.path.join(os.path.dirname(os.path.abspath(__file__)), "image", "icon.png"))
+    _icon = app_icon()
     app.setWindowIcon(_icon)
     win = MainWindow()
     win.setWindowIcon(_icon)

@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QStyledItemDelegate, QAbstractItemDelegate, QFrame, QMenu,
                              QSizePolicy, QLineEdit, QFormLayout)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt6.QtGui import QColor, QAction, QActionGroup, QIcon
+from PyQt6.QtGui import QColor, QAction, QActionGroup
 from core.config import PanoramaConfig
 from core.backends import BaseInstrument, RtlSdrBackend, DemoSimulator, HackRfBackend
 from core.models import Spectrum, PEMINSignal
@@ -21,6 +21,7 @@ from core.methods import PanoramaDiffWorkflow, HarmonicSearchWorkflow
 from core.audio_monitor import AudioMonitor
 from core.zero_span import ZeroSpanWorker
 from core.remote_control_server import RemoteControlServer
+from core.app_icon import app_icon
 from gui.spectrum_widget import SpectrumPlotWidget, _marker_color
 from gui.expert_panel import ExpertPanel
 from gui.zero_span_widget import ZeroSpanWidget
@@ -157,8 +158,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ПЭМИН Детектор")
-        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "image", "icon.png")
-        self.setWindowIcon(QIcon(_icon_path))
+        self.setWindowIcon(app_icon())
         self.resize(1200, 800)
 
         self.setStyleSheet(
