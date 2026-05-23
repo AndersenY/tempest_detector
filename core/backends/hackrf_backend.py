@@ -322,6 +322,8 @@ class HackRfBackend(BaseInstrument):
     _SWEEP_SETTLE_FAST_S = 0.010
     _CAPTURE_SETTLE_S = 0.005   # 5 мс между итерациями усреднения — декоррелирует шум
     _CAPTURE_SETTLE_FAST_S = 0.0
+    _CAPTURE_FLUSH_S = 0.020
+    _CAPTURE_FLUSH_FAST_S = 0.003
 
     def capture_spectrum(self) -> Spectrum:
         if not self.is_connected or not self._cfg:
@@ -338,7 +340,8 @@ class HackRfBackend(BaseInstrument):
         avg = np.zeros(cfg.fft_size, dtype=np.float64)
         mx = np.full(cfg.fft_size, -np.inf, dtype=np.float64)
         cnt = 0
-        for _ in range(cfg.averaging_count):
+        self._flush_rx_queue(fast)
+        for _ in range(max(1, int(cfg.averaging_count))):
             time.sleep(settle)
             raw = self._collect_samples(cfg.fft_size)
             if len(raw) < cfg.fft_size:
@@ -356,6 +359,16 @@ class HackRfBackend(BaseInstrument):
                  + self._center_freq)
         mask = (freqs >= start_hz) & (freqs <= stop_hz)
         return Spectrum(freqs[mask], db[mask], self._sample_rate / cfg.fft_size, time.time())
+
+    def _flush_rx_queue(self, fast=False) -> None:
+        flush_s = self._CAPTURE_FLUSH_FAST_S if fast else self._CAPTURE_FLUSH_S
+        samples_to_discard = max(1024, int(self._sample_rate * flush_s))
+        try:
+            self._collect_samples(samples_to_discard)
+        except RuntimeError:
+            # Как и RTL read_bytes(flush): это best-effort сброс старых USB-буферов.
+            # Настоящая ошибка чтения проявится на основном захвате ниже.
+            pass
 
     def _capture_sweep(self, cfg, fast=False):
         step = self._SWEEP_STEP_BW
