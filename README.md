@@ -57,6 +57,10 @@
 
 1. Клонируйте или скачайте проект.
 
+```bash
+git clone https://github.com/AndersenY/tempest_detector.git
+```
+
 2. Перейдите в папку проекта:
 
 ```bash
@@ -65,8 +69,16 @@ cd /path/to/pemin_detector
 
 3. Создайте виртуальное окружение:
 
+Linux:
+
 ```bash
 python3 -m venv sdr
+```
+
+Windows:
+
+```powershell
+python.exe -m venv sdr
 ```
 
 4. Активируйте окружение.
@@ -146,45 +158,119 @@ python main.py
 
 Сборку лучше выполнять на Windows, потому что PyInstaller собирает исполняемый файл под текущую операционную систему.
 
-1. Перейдите в папку проекта и создайте виртуальное окружение:
+1. Перейдите в папку проекта:
 
 ```powershell
-cd C:\path\to\pemin_detector
-py -3 -m venv sdr
+cd путь\к\папке\проекта
+```
+
+2. Создайте виртуальное окружение:
+
+```powershell
+python -m venv sdr
+```
+
+3. Активируйте окружение:
+
+```powershell
 ./sdr/Scripts/activate
 ```
 
-2. Установите зависимости приложения:
+4. Установите зависимости:
 
 ```powershell
-python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-3. Соберите приложение:
+5. Убедитесь, что приложение запускается:
 
 ```powershell
-pyinstaller `
-  --noconfirm `
-  --clean `
-  --windowed `
-  --name "ПЭМИН Детектор" `
-  --icon "image\icon.ico" `
-  --add-data "image;image" `
-  --add-binary "lib\hackrf-0.dll;lib" `
-  --add-binary "lib\libusb-1.0.dll;lib" `
-  --add-binary "lib\libwinpthread-1.dll;lib" `
-  --add-binary "lib\rtlsdr.dll;lib" `
-  main.py
+python main.py
+```
+
+Если приложение запускается без ошибок, можно переходить к сборке.
+
+6. Создайте директорию app и перейдите в нее:
+
+```powershell
+mkdir app
+cd app
+```
+
+7. Соберите приложение с помощью PyInstaller:
+
+```powershell
+pyinstaller --noconfirm --clean --windowed --name "PEMIN_Detector" --icon "..\image\icon.ico" --add-data "..\image;image" --add-binary "..\lib\hackrf-0.dll;lib" --add-binary "..\lib\libusb-1.0.dll;lib" --add-binary "..\lib\libwinpthread-1.dll;lib" --add-binary "..\lib\rtlsdr.dll;lib" --distpath "." --workpath "build" --specpath "." "..\main.py"
 ```
 
 Готовый файл будет находиться в:
 
 ```text
-dist\ПЭМИН Детектор\ПЭМИН Детектор.exe
+dist\PEMIN_Detector\PEMIN_Detector.exe
 ```
 
-Для работы с RTL-SDR или HackRF на другом компьютере также нужны установленные USB-драйверы устройств. DLL из папки `lib/` попадают в сборку командой выше.
+После сборки в папке проекта появятся следующие файлы и папки:
+
+```text
+build\
+dist\
+PEMIN_Detector.spec
+```
+
+### Папка `build`
+
+```text
+build\
+```
+
+Это временная служебная папка PyInstaller. В ней находятся промежуточные файлы, которые используются во время сборки приложения.
+
+Эту папку не нужно переносить на другой компьютер. После успешной сборки её можно удалить.
+
+### Папка `dist`
+
+```text
+dist\
+```
+
+Это основная папка с готовым собранным приложением.
+
+Готовый `.exe` будет находиться здесь:
+
+```text
+dist\PEMIN_Detector\PEMIN_Detector.exe
+```
+
+Именно папку:
+
+```text
+dist\PEMIN_Detector\
+```
+
+нужно переносить на другой компьютер, если приложение собрано не в один файл. Внутри неё будут находиться сам `.exe`, служебные файлы Python, добавленные изображения и DLL-библиотеки из папки `lib`.
+
+### Файл `PEMIN_Detector.spec`
+
+```text
+PEMIN_Detector.spec
+```
+
+Это файл конфигурации сборки PyInstaller. В нём сохраняются параметры сборки: имя приложения, подключённые файлы, библиотеки, иконка и другие настройки.
+
+Обычно вручную его менять не нужно. Если требуется полностью пересобрать приложение с нуля, этот файл можно удалить вместе с папками `build` и `dist`.
+
+### Очистка перед повторной сборкой
+
+Если нужно пересобрать приложение заново, можно удалить старые результаты сборки:
+
+```powershell
+Remove-Item -Recurse -Force build, dist
+Remove-Item -Force *.spec
+```
+
+После этого снова выполните команду сборки PyInstaller.
+
+Для работы с RTL-SDR или HackRF на другом компьютере также нужны установленные USB-драйверы устройств. DLL из папки `lib/` попадают в сборку командой выше, но наличие DLL не заменяет установку драйверов устройств в системе.
 
 ## Быстрый старт
 
