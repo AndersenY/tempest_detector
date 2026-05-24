@@ -4,3 +4,4 @@ pyqtgraph>=0.13.4
 scipy>=1.11.4
 sounddevice>=0.5.5
 pyrtlsdr>=0.3.0
+pyinstaller>=6.0.0

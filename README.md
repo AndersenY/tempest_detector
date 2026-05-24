@@ -66,7 +66,7 @@ cd /path/to/pemin_detector
 3. Создайте виртуальное окружение:
 
 ```bash
-python3 -m venv .venv
+python3 -m venv sdr
 ```
 
 4. Активируйте окружение.
@@ -74,13 +74,13 @@ python3 -m venv .venv
 Linux/macOS:
 
 ```bash
-source .venv/bin/activate
+source sdr/bin/activate
 ```
 
 Windows PowerShell:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+./sdr/Scripts/activate
 ```
 
 5. Установите зависимости:
@@ -141,6 +141,50 @@ python main.py
 ```
 
 На Linux при первом запуске приложение создаёт desktop-файл `pemin-detector.desktop` в `~/.local/share/applications`, чтобы его можно было запускать из меню приложений.
+
+## Сборка exe-файла для Windows
+
+Сборку лучше выполнять на Windows, потому что PyInstaller собирает исполняемый файл под текущую операционную систему.
+
+1. Перейдите в папку проекта и создайте виртуальное окружение:
+
+```powershell
+cd C:\path\to\pemin_detector
+py -3 -m venv sdr
+./sdr/Scripts/activate
+```
+
+2. Установите зависимости приложения:
+
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+3. Соберите приложение:
+
+```powershell
+pyinstaller `
+  --noconfirm `
+  --clean `
+  --windowed `
+  --name "ПЭМИН Детектор" `
+  --icon "image\icon.ico" `
+  --add-data "image;image" `
+  --add-binary "lib\hackrf-0.dll;lib" `
+  --add-binary "lib\libusb-1.0.dll;lib" `
+  --add-binary "lib\libwinpthread-1.dll;lib" `
+  --add-binary "lib\rtlsdr.dll;lib" `
+  main.py
+```
+
+Готовый файл будет находиться в:
+
+```text
+dist\ПЭМИН Детектор\ПЭМИН Детектор.exe
+```
+
+Для работы с RTL-SDR или HackRF на другом компьютере также нужны установленные USB-драйверы устройств. DLL из папки `lib/` попадают в сборку командой выше.
 
 ## Быстрый старт
 
