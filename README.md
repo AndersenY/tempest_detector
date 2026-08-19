@@ -183,6 +183,182 @@ PEMIN_Detector.exe
 
 Для работы с реальным SDR-оборудованием на компьютере всё равно должны быть установлены системные USB-драйверы для RTL-SDR или HackRF One. DLL-библиотеки включены в сборку, но они не заменяют драйвер устройства в системе.
 
+
+## Запуск в Docker
+
+## Сборка образа
+
+```bash
+docker build -t pemin-detector .
+```
+
+---
+
+## Быстрый старт (демо-режим)
+
+Если SDR-оборудование не подключено, приложение работает встроенном симуляторе:
+
+```bash
+xhost +local:docker
+docker run -it --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    pemin-detector
+```
+
+---
+
+## Подключение USB-устройств SDR
+
+### Linux
+
+Для доступа к USB-устройству из контейнера нужно пробросить `/dev/bus/usb`:
+
+```bash
+docker run -it --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    --device=/dev/bus/usb \
+    pemin-detector
+```
+
+#### Проверка, что устройство видно
+
+Подключите SDR и выполните на хосте:
+
+```bash
+lsusb
+```
+
+Пример вывода с RTL-SDR:
+
+```
+Bus 001 Device 005: ID 0bda:2838 Realtek Semiconductor Corp. RTL2838 DVB-T
+```
+
+Пример вывода с HackRF:
+
+```
+Bus 001 Device 004: ID 1d50:6089 OpenMoko, Inc. HackRF One
+```
+
+Убедитесь, что `--device=/dev/bus/usb` передан в `docker run`.
+
+#### udev-правила (рекомендуется)
+
+Чтобы не прописывать `--device` вручную каждый раз, добавьте udev-правило на хосте:
+
+RTL-SDR:
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2838", MODE="0666"' | sudo tee /etc/udev/rules.d/20-rtlsdr.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+HackRF:
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6089", MODE="0666"' | sudo tee /etc/udev/rules.d/20-hackrf.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+После этого переподключите устройство. Теперь можно запускать без `--device`:
+
+```bash
+docker run -it --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    --device=/dev/bus/usb \
+    pemin-detector
+```
+
+#### Права доступа
+
+Если приложение не видит устройство, проверьте права:
+
+```bash
+ls -la /dev/bus/usb/XXX/YYY
+```
+
+Если права `root:root` и `0600`, добавьте себя в группу `plugdev`:
+
+```bash
+sudo usermod -aG plugdev $USER
+```
+
+Перелогиньтесь. Или запускайте контейнер от root (по умолчанию в образе).
+
+## TCP-сервер удалённого управления
+
+Приложение поднимает TCP-сервер на порту `62000`. Для доступа извне контейнера пробросьте порт:
+
+```bash
+docker run -it --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    --device=/dev/bus/usb \
+    -p 62000:62000 \
+    pemin-detector
+```
+
+Или используйте `--network host` (пробрасывать порты не нужно):
+
+```bash
+docker run -it --rm --network host \
+    --device=/dev/bus/usb \
+    pemin-detector
+```
+
+---
+
+## Полный пример запуска
+
+Linux, RTL-SDR, с GUI и удалённым управлением:
+
+```bash
+xhost +local:docker
+docker run -it --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    --device=/dev/bus/usb \
+    -p 62000:62000 \
+    pemin-detector
+```
+
+---
+
+## Решение проблем
+
+### `qt.qpa.xcb: could not connect to display`
+
+Контейнер не может подключиться к X11. Убедитесь что:
+
+1. Выполнили `xhost +local:docker` на хосте
+2. Передали `-e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix`
+
+### `usb_open: error finding default device`
+
+USB-устройство не проброшено в контейнер. Добавьте `--device=/dev/bus/usb`.
+
+### RTL-SDR не обнаруживается
+
+1. Проверьте `lsusb` на хосте
+2. Отключите DVB-драйвер (см. раздел RTL-SDR)
+3. Проверьте права на `/dev/bus/usb`
+
+### HackRF не обнаруживается
+
+1. Проверьте `lsusb` на хосте
+2. Установите `libhackrf-dev` на хосте
+3. Проверьте права на `/dev/bus/usb`
+
+### `update-desktop-database: not found`
+
+Не критично. Сообщение игнорируется. Для подавления установите `desktop-file-utils` на хосте.
+
+
 ## Сборка exe-файла для Windows
 
 Сборку лучше выполнять на Windows, потому что PyInstaller собирает исполняемый файл под текущую операционную систему.
