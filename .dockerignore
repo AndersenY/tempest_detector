@@ -1,0 +1,15 @@
+.git
+.gitignore
+sdr/
+build/
+dist/
+*.spec
+*.pyc
+__pycache__/
+.vscode/
+app_windows_server.7z
+zadig.exe
+KNOWN_ISSUES/
+*.csv
+*.npz
+CLAUDE.md
