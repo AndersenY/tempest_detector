@@ -402,6 +402,68 @@ pip install -r requirements.txt
 
 Используйте встроенный демо-симулятор. Он генерирует синтетический спектр с фоном и гармоническими сигналами, поэтому подходит для проверки интерфейса и алгоритмов.
 
+### Ошибка `rtlsdr_set_dithering` undefined symbol
+
+При запуске приложения возникает ошибка:
+
+```
+AttributeError: /lib/x86_64-linux-gnu/librtlsdr.so: undefined symbol: rtlsdr_set_dithering
+```
+
+#### Причина
+
+Bundled `pyrtlsdr 0.5.0` вызывает `rtlsdr_set_dithering` при импорте, но системная `librtlsdr 2.0.1` (Ubuntu 24.04 noble) не эксппортирует этот символ. Функция `rtlsdr_set_dithering` была добавлена в более поздних коммитах librtlsdr, которых нет в пакете из стандартного репозитория.
+
+Аналогичная проблема может возникнуть с GPIO-функциями (`rtlsdr_set_gpio_output`, `rtlsdr_set_gpio_input`, `rtlsdr_set_gpio_bit` и др.), которые также отсутствуют в `librtlsdr 2.0.1`.
+
+#### Решение
+
+Обернуть вызовы отсутствующих функций в `try/except AttributeError` в файле:
+
+```
+sdr/lib/python3.12/site-packages/rtlsdr/librtlsdr.py
+```
+
+Найти блоки:
+```python
+# RTLSDR_API int rtlsdr_set_dithering(rtlsdr_dev *dev, int on)
+f = librtlsdr.rtlsdr_set_dithering
+f.restype, f.argtypes = c_int, [p_rtlsdr_dev, c_int]
+```
+
+Заменить на:
+```python
+# RTLSDR_API int rtlsdr_set_dithering(rtlsdr_dev *dev, int on)
+try:
+    f = librtlsdr.rtlsdr_set_dithering
+    f.restype, f.argtypes = c_int, [p_rtlsdr_dev, c_int]
+except AttributeError:
+    pass
+```
+
+Аналогично для всех GPIO-функций (`rtlsdr_set_gpio_output`, `rtlsdr_set_gpio_input`, `rtlsdr_set_gpio_bit`, `rtlsdr_get_gpio_bit`, `rtlsdr_set_gpio_byte`, `rtlsdr_get_gpio_byte`, `rtlsdr_set_gpio_status`).
+
+### Ошибка `PortAudio library not found`
+
+При запуске приложения возникает ошибка:
+
+```
+OSError: PortAudio library not found
+```
+
+#### Причина
+
+Пакет `sounddevice` (используется в `core/audio_monitor.py` для тон-монитора ПЭМИН-сигнала) зависит от системной библиотеки PortAudio. На Ubuntu/Debian по умолчанию PortAudio не установлен.
+
+#### Решение
+
+Установите системную библиотеку:
+
+Ubuntu/Debian:
+```bash
+sudo apt install libportaudio2
+```
+
 ## Примечание
 
 Проект предназначен для учебных, исследовательских и демонстрационных задач по анализу побочных электромагнитных излучений. Корректность измерений зависит от SDR-приёмника, антенны, экранирования помещения, выбранного диапазона, калибровки и методики проведения эксперимента.
